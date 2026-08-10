@@ -95,20 +95,42 @@ can see what happened.
 `weeks_read` can begin before your `start_date`. The shift days it returns are still
 filtered to `start_date` and later.
 
-### An unknown argument name is silently ignored
+### An unknown argument name is refused
 
-The MCP SDK checks types, ranges and required arguments, but it drops arguments it
-does not recognise instead of complaining. So this:
+The MCP SDK checks types, ranges and required arguments, but it *drops* arguments it
+does not recognise instead of complaining. That is dangerous: writing `group_id`
+instead of `group_ids` would remove a filter rather than fail, and a removed filter
+means a wider answer than anyone asked for.
+
+So this server refuses them itself:
 
 ```json
 {"name":"pinkbee_list_open_shifts","arguments":{"dates":["2026-08-13"]}}
 ```
 
-does not fail. `pinkbee_list_open_shifts` has no `dates` argument, so the whole thing
-is thrown away and the tool runs with its defaults: `start_date` = today and `weeks`
-= 3. You get today's week onwards, which looks like the wrong date range rather than
-a rejected argument.
+```
+pinkbee_list_open_shifts has no argument ['dates'].
+It accepts: group_ids, shift_ids, start_date, weeks.
+```
 
-If a result ignores what you asked for, check your argument names against
-`tools/list` first. `dates` belongs to `pinkbee_get_week_schedule`; `start_date` and
-`weeks` belong to `pinkbee_list_open_shifts`.
+`dates` belongs to `pinkbee_get_week_schedule`; `start_date` and `weeks` belong to
+`pinkbee_list_open_shifts`. `tools/list` is always the source of truth.
+
+### Naming shifts is compulsory
+
+`pinkbee_list_registrations` will not guess. Give it `shift_ids` or `group_ids`, and
+any id that does not exist is an error rather than a filter that matches nothing:
+
+```
+no volunteer group with id [999999]. Use pinkbee_list_groups_and_shifts to see the ids that exist.
+```
+
+To ask about every shift on purpose, say so: `all_shifts=true`. It cannot be combined
+with a filter. The reason is blunt — an empty filter means "everything" to Pinkbee, so
+a silently-unmatched filter would hand back the whole roster including every name.
+
+### Failures are real errors
+
+A tool that cannot do what you asked fails with `isError: true` and a sentence saying
+what to change, rather than returning a normal result whose text happens to start with
+"Error". Check `isError` before reading `content`.

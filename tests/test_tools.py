@@ -4,6 +4,7 @@ import datetime as dt
 import json
 
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 
 from pinkbee_mcp import server
 from pinkbee_mcp.config import Config
@@ -37,7 +38,7 @@ async def test_check_connection_reports_personal_data_on():
     assert "Personal data: on" in await server.pinkbee_check_connection()
 
 
-async def test_check_connection_reports_a_broken_source():
+async def test_check_connection_fails_loudly_on_a_broken_source():
     class Broken:
         def describe(self):
             return "broken"
@@ -46,7 +47,8 @@ async def test_check_connection_reports_a_broken_source():
             raise ValueError("cannot reach Pinkbee")
 
     server.setup(Config(), Broken())
-    assert await server.pinkbee_check_connection() == "Error: cannot reach Pinkbee"
+    with pytest.raises(ToolError, match="cannot reach Pinkbee"):
+        await server.pinkbee_check_connection()
 
 
 # --- 2. groups and shifts -------------------------------------------------
@@ -111,8 +113,8 @@ async def test_week_schedule_accepts_dutch_date_order():
 
 
 async def test_week_schedule_rejects_an_unreadable_date():
-    answer = await server.pinkbee_get_week_schedule(dates=["13 augustus"])
-    assert answer.startswith("Error: date must be YYYY-MM-DD or DD-MM-YYYY")
+    with pytest.raises(ToolError, match="date must be YYYY-MM-DD or DD-MM-YYYY"):
+        await server.pinkbee_get_week_schedule(dates=["13 augustus"])
 
 
 async def test_week_schedule_includes_full_shifts_by_default():
@@ -189,8 +191,8 @@ async def test_open_shifts_says_how_many_days_away_each_shift_is():
 
 
 async def test_emails_are_refused_when_personal_data_is_off():
-    answer = await server.pinkbee_list_group_emails(group_ids=[2])
-    assert answer.startswith("Error: this tool returns personal data")
+    with pytest.raises(ToolError, match="returns personal data"):
+        await server.pinkbee_list_group_emails(group_ids=[2])
 
 
 async def test_emails_are_returned_when_personal_data_is_on():
@@ -226,8 +228,14 @@ async def test_emails_can_include_names_on_request():
 
 async def test_emails_reject_an_unknown_employment_value():
     allow_personal_data()
-    answer = await server.pinkbee_list_group_emails(group_ids=[2], employment=["soon"])
-    assert answer.startswith("Error: unknown employment value(s) ['soon']")
+    with pytest.raises(ToolError, match=r"unknown employment value\(s\) \['soon'\]"):
+        await server.pinkbee_list_group_emails(group_ids=[2], employment=["soon"])
+
+
+async def test_emails_reject_a_group_that_does_not_exist():
+    allow_personal_data()
+    with pytest.raises(ToolError, match=r"no volunteer group with id \[999999\]"):
+        await server.pinkbee_list_group_emails(group_ids=[999999])
 
 
 async def test_emails_respect_the_employment_filter():
@@ -243,16 +251,18 @@ async def test_emails_respect_the_employment_filter():
 
 
 async def test_registrations_are_refused_when_personal_data_is_off():
-    answer = await server.pinkbee_list_registrations(
-        start_date="2026-08-10", end_date="2026-08-16"
-    )
-    assert answer.startswith("Error: this tool returns personal data")
+    with pytest.raises(ToolError, match="returns personal data"):
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-16", all_shifts=True
+        )
 
 
 async def test_registrations_are_returned_when_personal_data_is_on():
     allow_personal_data()
     data = json.loads(
-        await server.pinkbee_list_registrations(start_date="2026-08-10", end_date="2026-08-16")
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-16", all_shifts=True
+        )
     )
     assert data["count"] == len(data["registrations"])
     assert all(row["name"] for row in data["registrations"])
@@ -261,17 +271,19 @@ async def test_registrations_are_returned_when_personal_data_is_on():
 async def test_registrations_stay_inside_the_date_range():
     allow_personal_data()
     data = json.loads(
-        await server.pinkbee_list_registrations(start_date="2026-08-10", end_date="2026-08-16")
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-16", all_shifts=True
+        )
     )
     assert all("2026-08-10" <= row["date"] <= "2026-08-16" for row in data["registrations"])
 
 
 async def test_registrations_reject_a_backwards_date_range():
     allow_personal_data()
-    answer = await server.pinkbee_list_registrations(
-        start_date="2026-08-16", end_date="2026-08-10"
-    )
-    assert answer.startswith("Error: end_date")
+    with pytest.raises(ToolError, match="end_date"):
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-16", end_date="2026-08-10", all_shifts=True
+        )
 
 
 async def test_registrations_can_filter_on_shift_id():
@@ -298,7 +310,9 @@ async def test_registrations_translate_group_ids_into_shift_ids():
 async def test_registrations_add_the_shift_id_back_to_each_row():
     allow_personal_data()
     data = json.loads(
-        await server.pinkbee_list_registrations(start_date="2026-08-10", end_date="2026-08-16")
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-16", all_shifts=True
+        )
     )
     assert all(row["shift_id"] is not None for row in data["registrations"])
 
@@ -335,3 +349,108 @@ async def test_required_arguments_are_marked_as_such():
         "end_date",
         "start_date",
     ]
+
+
+# --- the filter must never widen by accident ------------------------------
+
+
+async def test_registrations_refuse_a_group_that_does_not_exist():
+    """The leak this replaced: an unmatched group became an empty = unfiltered query."""
+    allow_personal_data()
+    with pytest.raises(ToolError, match=r"no volunteer group with id \[999999\]"):
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-31", group_ids=[999999]
+        )
+
+
+async def test_registrations_refuse_a_shift_that_does_not_exist():
+    allow_personal_data()
+    with pytest.raises(ToolError, match=r"no shift with id \[999999\]"):
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-31", shift_ids=[999999]
+        )
+
+
+async def test_registrations_refuse_one_unknown_id_among_valid_ones():
+    allow_personal_data()
+    with pytest.raises(ToolError, match=r"\[999999\]"):
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-31", group_ids=[1, 999999]
+        )
+
+
+async def test_registrations_need_a_filter_or_an_explicit_all_shifts():
+    allow_personal_data()
+    with pytest.raises(ToolError, match="all_shifts=true"):
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-31"
+        )
+
+
+async def test_registrations_allow_everything_when_asked_explicitly():
+    allow_personal_data()
+    data = json.loads(
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-31", all_shifts=True
+        )
+    )
+    assert data["shift_ids"] == []
+    assert data["all_shifts"] is True
+    assert data["count"] > 0
+
+
+async def test_registrations_refuse_all_shifts_together_with_a_filter():
+    allow_personal_data()
+    with pytest.raises(ToolError, match="cannot be combined"):
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-31", group_ids=[2], all_shifts=True
+        )
+
+
+# --- limits ---------------------------------------------------------------
+
+
+async def test_registrations_refuse_too_long_a_date_range():
+    allow_personal_data()
+    with pytest.raises(ToolError, match="PINKBEE_MAX_REGISTRATION_DAYS"):
+        await server.pinkbee_list_registrations(
+            start_date="2026-01-01", end_date="2026-12-31", all_shifts=True
+        )
+
+
+async def test_the_date_range_limit_is_configurable():
+    server.setup(Config(allow_personal_data=True, max_registration_days=3), MockPinkbee())
+    with pytest.raises(ToolError, match="at most 3 are allowed"):
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10", end_date="2026-08-31", all_shifts=True
+        )
+
+
+async def test_registrations_refuse_an_oversized_id_list():
+    allow_personal_data()
+    with pytest.raises(ToolError, match="PINKBEE_MAX_IDS_PER_FILTER"):
+        await server.pinkbee_list_registrations(
+            start_date="2026-08-10",
+            end_date="2026-08-31",
+            shift_ids=list(range(100)),
+        )
+
+
+async def test_week_schedule_refuses_too_many_dates():
+    server.setup(Config(max_dates=2), MockPinkbee())
+    with pytest.raises(ToolError, match="PINKBEE_MAX_DATES"):
+        await server.pinkbee_get_week_schedule(
+            dates=["2026-08-10", "2026-08-17", "2026-08-24"]
+        )
+
+
+async def test_open_shifts_refuses_too_many_weeks():
+    server.setup(Config(max_weeks=2), MockPinkbee())
+    with pytest.raises(ToolError, match="PINKBEE_MAX_WEEKS"):
+        await server.pinkbee_list_open_shifts(weeks=5)
+
+
+async def test_open_shifts_refuses_an_oversized_id_list():
+    server.setup(Config(max_ids_per_filter=3), MockPinkbee())
+    with pytest.raises(ToolError, match="at most 3 are allowed"):
+        await server.pinkbee_list_open_shifts(group_ids=[1, 2, 4, 5])

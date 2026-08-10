@@ -85,10 +85,17 @@ is ignored by git.
 | `PINKBEE_BASE_URL` | — | e.g. `https://your-organisation.mijnpinkbee.nl`. Required for `live` |
 | `PINKBEE_LOGIN` | — | Pinkbee username. Required for `live` |
 | `PINKBEE_PASSWORD` | — | Pinkbee password. Required for `live` |
+| `PINKBEE_ALLOW_INSECURE_HTTP_TO_LOCALHOST` | `false` | Allows plain `http://`, and only to this machine |
 
 In `live` mode all three credentials must be present or the server exits with a
 message naming what is missing. That refusal is the point: an unconfigured container
 can never reach production by accident.
+
+**The URL has to be `https://`.** Logging in POSTs the username and password as a
+form, so plain HTTP would put them on the wire in clear text. `http://` is refused
+outright for any real host, and allowed for `localhost` only when you also set
+`PINKBEE_ALLOW_INSECURE_HTTP_TO_LOCALHOST=true` — which exists for a local test
+Pinkbee and nothing else.
 
 ### Personal data
 
@@ -108,6 +115,8 @@ The other four tools never contain a name or an address, so they work either way
 | `PINKBEE_MCP_PORT` | `8080` | Port inside the container |
 | `PINKBEE_MCP_PATH` | `/mcp` | Path of the MCP endpoint |
 | `PINKBEE_MCP_TOKEN` | empty | If set, clients must send `Authorization: Bearer <token>` |
+| `PINKBEE_ALLOWED_ORIGINS` | empty | Extra `Origin` values to accept, comma separated |
+| `PINKBEE_ALLOWED_HOSTS` | empty | Extra `Host` values to accept, comma separated |
 
 Without a token the server logs a warning at startup and accepts anyone who can
 reach the port. Make one with:
@@ -115,6 +124,24 @@ reach the port. Make one with:
 ```bash
 openssl rand -hex 32
 ```
+
+A rejected request gets `401` with a `WWW-Authenticate: Bearer` challenge. This is a
+single shared token for a private deployment — it is deliberately **not** MCP's OAuth
+authorization, so there is no protected-resource metadata for a client to discover.
+For an internet-facing service you would want the OAuth flow from the MCP
+authorization spec instead; put this behind a proxy you trust.
+
+### Limits on one tool call
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PINKBEE_MAX_REGISTRATION_DAYS` | `120` | Longest date range `pinkbee_list_registrations` accepts |
+| `PINKBEE_MAX_IDS_PER_FILTER` | `50` | Most ids allowed in one `shift_ids` or `group_ids` |
+| `PINKBEE_MAX_DATES` | `12` | Most dates allowed in one `pinkbee_get_week_schedule` |
+| `PINKBEE_MAX_WEEKS` | `12` | Most weeks `pinkbee_list_open_shifts` will scan |
+
+These stop one call from exporting months of personal data or producing an answer too
+large to be useful. Going over a limit is an error naming the variable to raise.
 
 ### Other
 
@@ -128,6 +155,66 @@ openssl rand -hex 32
 and 02:00 Amsterdam time a naive "today" is still yesterday, and every tool that
 defaults to today would read the wrong week. An unknown timezone name is rejected at
 startup.
+
+## Origin and Host checks
+
+A web page on any site can POST to a port on your machine. Without a check, such a
+page could drive this server and read a whole roster — the DNS-rebinding attack the
+MCP transport spec requires servers to block.
+
+Two headers are checked on every request:
+
+- **`Host`** — what the client asked for. An unknown value gets **421**.
+- **`Origin`** — which page is making the request. An unknown value gets **403**. A
+  request with **no** `Origin` is fine: that is what a normal, non-browser MCP client
+  sends. Only browsers set it.
+
+`localhost` and `127.0.0.1` are always accepted, on any port. Anything else you add
+through `PINKBEE_ALLOWED_HOSTS` and `PINKBEE_ALLOWED_ORIGINS`, comma separated.
+
+**A desktop MCP client with a `Host` of its own** — some clients send the name you
+typed. Whatever appears in the log line `Invalid Host header: <value>` is exactly what
+to add.
+
+### How matching works
+
+| Allowed value | Request header | Result |
+| --- | --- | --- |
+| `mcp.example.org` | `Host: mcp.example.org` | ✅ 200 |
+| `mcp.example.org` | `Host: mcp.example.org:8443` | ❌ 421 — the port makes it a different string |
+| `mcp.example.org:*` | `Host: mcp.example.org:8443` | ✅ 200 |
+| `mcp.example.org:*` | `Host: mcp.example.org` | ❌ 421 — `:*` needs a port to be present |
+| `mcp.example.org` | `Host: sub.mcp.example.org` | ❌ 421 — no subdomain wildcards |
+| `https://mcp.example.org` | `Origin: https://mcp.example.org/` | ❌ 403 — no trailing slash |
+| `https://mcp.example.org` | `Origin: http://mcp.example.org` | ❌ 403 — the scheme is part of it |
+
+Three rules follow from that:
+
+1. **List the name twice**, plain and with `:*`. `mcp.example.org:*` does *not* cover
+   the portless form, and the portless form does not cover a port. Listing both is
+   why every example above has two entries.
+2. **The only wildcard is `:*`, for the port.** `*.example.org` matches nothing.
+3. **`Origin` is an exact origin**: scheme, host, optional port. No path, no trailing
+   slash.
+
+`X-Forwarded-Host` is deliberately **not** consulted, since any client can send it.
+Only the real `Host` and `Origin` count.
+
+### When something is refused
+
+The server logs exactly what it rejected, so you do not have to guess:
+
+```
+WARNING mcp.server.transport_security Invalid Host header: mcp.example.org:8443
+WARNING mcp.server.transport_security Invalid Origin header: https://mcp.example.org/
+```
+
+At startup it also logs the full list it will accept, so you can check your
+configuration arrived:
+
+```
+INFO pinkbee_mcp accepting Host localhost, localhost:*, 127.0.0.1, ... and Origin http://localhost, ...
+```
 
 ## Ports and TLS
 

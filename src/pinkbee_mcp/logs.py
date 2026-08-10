@@ -24,6 +24,8 @@ import logging
 import sys
 import time
 
+from mcp.server.mcpserver.exceptions import ToolError
+
 log = logging.getLogger("pinkbee_mcp")
 
 #: Longest argument text we put in one log line.
@@ -109,6 +111,36 @@ def answer_text_of(result: object) -> str | None:
     if text is None and isinstance(first, dict):
         text = first.get("text")
     return text if isinstance(text, str) else None
+
+
+class StrictArguments:
+    """Rejects a `tools/call` that carries an argument the tool does not have.
+
+    The SDK validates types, ranges and required arguments, but quietly drops
+    arguments it does not recognise. That is dangerous here: writing `group_id`
+    instead of `group_ids` on pinkbee_list_registrations would drop the filter
+    instead of failing, and a dropped filter means a wider answer than anyone asked
+    for. So an unknown argument is refused outright, with a hint at the real names.
+    """
+
+    def __init__(self, allowed_arguments: dict[str, set[str]]) -> None:
+        self.allowed_arguments = allowed_arguments
+
+    async def __call__(self, ctx, call_next):
+        params = ctx.params
+        if getattr(ctx, "method", None) == "tools/call" and isinstance(params, dict):
+            name = params.get("name")
+            arguments = params.get("arguments")
+            allowed = self.allowed_arguments.get(name)
+            if allowed is not None and isinstance(arguments, dict):
+                unknown = sorted(set(arguments) - allowed)
+                if unknown:
+                    known = ", ".join(sorted(allowed)) or "none"
+                    log.warning("%s called with unknown argument(s) %s", name, unknown)
+                    raise ToolError(
+                        f"{name} has no argument {unknown}. It accepts: {known}."
+                    )
+        return await call_next(ctx)
 
 
 class RequestLogger:

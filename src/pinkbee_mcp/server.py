@@ -1,9 +1,11 @@
 """The MCP server: six read-only tools for a Pinkbee volunteer roster.
 
-Each tool is a plain async function. It gets the data from the current data
-source (mock or live), reshapes it, and returns JSON text. Tools never raise:
-when something goes wrong they return a short "Error: ..." sentence, which is
-what the AI model reads and can act on.
+Each tool is a plain async function. It gets the data from the current data source
+(mock or live), reshapes it, and returns JSON text.
+
+When something goes wrong a tool raises `ToolError` with a sentence explaining what
+to do about it. The SDK turns that into a tool result flagged `isError: true`, so the
+client can see it really failed, while the model still gets the actionable sentence.
 """
 
 from __future__ import annotations
@@ -15,16 +17,21 @@ from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from . import roster
 from .config import Config, load_config
 from .live import LivePinkbee, PinkbeeError
-from .logs import RequestLogger
+from .logs import RequestLogger, StrictArguments
 from .mock import MockPinkbee
 
 log = logging.getLogger("pinkbee_mcp.tools")
+
+# Refuses arguments that do not exist. setup() fills in the real argument names,
+# once every tool is registered and its schema is known.
+strict_arguments = StrictArguments({})
 
 mcp = MCPServer(
     name="pinkbee_mcp",
@@ -36,8 +43,8 @@ mcp = MCPServer(
         "cancel or change anything in Pinkbee."
     ),
     version="0.2.0",
-    # One place that logs every inbound call: see logs.py.
-    middleware=[RequestLogger()],
+    # Two pieces of cross-cutting behaviour, both in logs.py.
+    middleware=[strict_arguments, RequestLogger()],
 )
 
 READ_ONLY = {
@@ -47,12 +54,17 @@ READ_ONLY = {
     "open_world_hint": True,
 }
 
-MAX_DATES = 12
-MAX_WEEKS = 12
-
 # Set by setup(); the tools read these.
 config: Config | None = None
 source: MockPinkbee | LivePinkbee | None = None
+
+
+async def allowed_arguments() -> dict[str, set[str]]:
+    """The argument names each tool really has, taken from its own schema."""
+    return {
+        tool.name: set(tool.input_schema.get("properties", {}))
+        for tool in await mcp.list_tools()
+    }
 
 
 def setup(new_config: Config | None = None, new_source=None) -> None:
@@ -90,25 +102,35 @@ def as_json(payload) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
 
-def describe_error(problem: Exception) -> str:
-    """Turn any failure into one sentence the model can act on."""
+def as_tool_error(problem: Exception) -> ToolError:
+    """Turn any failure into a ToolError carrying one actionable sentence."""
+    if isinstance(problem, ToolError):
+        return problem
     if isinstance(problem, PinkbeeError | ValueError | KeyError):
         log.debug("handled %s: %s", type(problem).__name__, problem)
-        return f"Error: {problem}"
+        return ToolError(str(problem))
     # Unexpected: keep the traceback in the log, where an operator can see it.
     log.exception("unexpected failure in a tool")
-    return f"Error: unexpected {type(problem).__name__}: {problem}"
+    return ToolError(f"unexpected {type(problem).__name__}: {problem}")
 
 
-def personal_data_blocked() -> str | None:
-    """The refusal message when personal data is switched off, else None."""
-    if config.allow_personal_data:
-        return None
-    return (
-        "Error: this tool returns personal data (names and email addresses) and is "
-        "switched off. Start the server with PINKBEE_ALLOW_PERSONAL_DATA=true to "
-        "allow it."
-    )
+def require_personal_data() -> None:
+    """Stop here unless the operator switched personal data on."""
+    if not config.allow_personal_data:
+        raise ToolError(
+            "this tool returns personal data (names and email addresses) and is "
+            "switched off. Start the server with PINKBEE_ALLOW_PERSONAL_DATA=true to "
+            "allow it."
+        )
+
+
+def check_id_list(name: str, ids: list[int] | None) -> None:
+    """Refuse an id filter longer than the configured limit."""
+    if ids is not None and len(ids) > config.max_ids_per_filter:
+        raise ToolError(
+            f"{name} has {len(ids)} entries; at most {config.max_ids_per_filter} are "
+            "allowed (PINKBEE_MAX_IDS_PER_FILTER)."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +151,7 @@ async def pinkbee_check_connection() -> str:
     Returns:
         str: One line, for example "OK: built-in mock data (no connection to any
         Pinkbee instance). Week 2026-W33 has 42 shift days. Personal data: off."
-        On failure, "Error: <reason>".
+        On failure the tool fails with an explanation of what to change.
     """
     try:
         monday = roster.monday_of(today())
@@ -141,7 +163,7 @@ async def pinkbee_check_connection() -> str:
             f"Personal data: {'on' if config.allow_personal_data else 'off'}."
         )
     except Exception as problem:
-        return describe_error(problem)
+        raise as_tool_error(problem) from problem
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +197,7 @@ async def pinkbee_list_groups_and_shifts() -> str:
              "start_time": str, "end_time": str, "group_ids": [int]}
           ]
         }
-        On failure, "Error: <reason>".
+        On failure the tool fails with an explanation of what to change.
 
     Examples:
         - "What is the id of the Shop group?" -> read it from "groups".
@@ -215,7 +237,7 @@ async def pinkbee_list_groups_and_shifts() -> str:
 
         return as_json({"groups": group_rows, "shifts": shifts})
     except Exception as problem:
-        return describe_error(problem)
+        raise as_tool_error(problem) from problem
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +259,6 @@ async def pinkbee_get_week_schedule(
                 "read only once."
             ),
             min_length=1,
-            max_length=MAX_DATES,
         ),
     ],
     only_open_shifts: Annotated[
@@ -271,7 +292,7 @@ async def pinkbee_get_week_schedule(
             }
           ]
         }
-        On failure, "Error: <reason>".
+        On failure the tool fails with an explanation of what to change.
 
     Examples:
         - "What does the roster look like on 13 August?" -> dates=["2026-08-13"].
@@ -279,6 +300,12 @@ async def pinkbee_get_week_schedule(
         - "Where are the gaps in that week?" -> add only_open_shifts=true.
     """
     try:
+        if len(dates) > config.max_dates:
+            raise ToolError(
+                f"{len(dates)} dates given; at most {config.max_dates} are allowed "
+                "(PINKBEE_MAX_DATES)."
+            )
+
         # Several dates can land in the same week. Read each week only once, but
         # remember every date that asked for it.
         dates_per_week: dict[str, list[str]] = {}
@@ -307,7 +334,7 @@ async def pinkbee_get_week_schedule(
             )
         return as_json({"weeks": weeks})
     except Exception as problem:
-        return describe_error(problem)
+        raise as_tool_error(problem) from problem
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +356,6 @@ async def pinkbee_list_open_shifts(
         Field(
             description="How many weeks to look at, counted from start_date's week.",
             ge=1,
-            le=MAX_WEEKS,
         ),
     ] = 3,
     shift_ids: Annotated[
@@ -358,13 +384,21 @@ async def pinkbee_list_open_shifts(
              "open_spots": int, "timeblock_id": int, "days_from_now": int}
           ]
         }
-        On failure, "Error: <reason>".
+        On failure the tool fails with an explanation of what to change.
 
     Examples:
         - "Which shifts still need volunteers?" -> no arguments needed.
         - "Any gaps for the Shop group in the next 6 weeks?" -> group_ids=[2], weeks=6.
     """
     try:
+        if weeks > config.max_weeks:
+            raise ToolError(
+                f"{weeks} weeks asked for; at most {config.max_weeks} are allowed "
+                "(PINKBEE_MAX_WEEKS)."
+            )
+        check_id_list("shift_ids", shift_ids)
+        check_id_list("group_ids", group_ids)
+
         first_day = parse_date(start_date) if start_date else today()
         first_monday = roster.monday_of(first_day)
 
@@ -401,7 +435,7 @@ async def pinkbee_list_open_shifts(
             }
         )
     except Exception as problem:
-        return describe_error(problem)
+        raise as_tool_error(problem) from problem
 
 
 # ---------------------------------------------------------------------------
@@ -444,26 +478,38 @@ async def pinkbee_list_group_emails(
           "emails": [str],                                   # always
           "people": [{"id": int, "name": str, "email": str}]  # only with_names
         }
-        On failure or when switched off, "Error: <reason>".
+        On failure, or when personal data is switched off, the tool fails with an
+        explanation of what to change.
 
     Examples:
         - "Email addresses for groups 2 and 16" -> group_ids=[2, 16].
         - "Who is in the Opening group, with names?" -> group_ids=[5], with_names=true.
     """
     try:
-        refusal = personal_data_blocked()
-        if refusal:
-            return refusal
+        require_personal_data()
+        check_id_list("group_ids", group_ids)
 
         wanted = [status.strip().lower() for status in employment if status.strip()]
         unknown = sorted(set(wanted) - {"now", "future", "past"})
         if unknown:
-            return f"Error: unknown employment value(s) {unknown}. Use 'now', 'future' or 'past'."
+            raise ToolError(
+                f"unknown employment value(s) {unknown}. Use 'now', 'future' or 'past'."
+            )
+
+        # An id that does not exist must be an error, not a filter that quietly
+        # matches nothing or, worse, everything.
+        existing_groups, _ = await known_ids()
+        unknown_groups = sorted(set(group_ids) - existing_groups)
+        if unknown_groups:
+            raise ToolError(
+                f"no volunteer group with id {unknown_groups}. Use "
+                "pinkbee_list_groups_and_shifts to see the ids that exist."
+            )
 
         log.debug("asking for contacts of groups %s with status %s", group_ids, wanted)
         rows = await source.contacts(group_ids, wanted or ["now", "future"])
         if not isinstance(rows, list):
-            return "Error: Pinkbee did not return a list of contacts."
+            raise ToolError("Pinkbee did not return a list of contacts.")
 
         emails = sorted(
             {str(row.get("email", "")).strip().lower() for row in rows if row.get("email")}
@@ -486,7 +532,7 @@ async def pinkbee_list_group_emails(
             ]
         return as_json(result)
     except Exception as problem:
-        return describe_error(problem)
+        raise as_tool_error(problem) from problem
 
 
 # ---------------------------------------------------------------------------
@@ -514,12 +560,27 @@ async def pinkbee_list_registrations(
             )
         ),
     ] = None,
+    all_shifts: Annotated[
+        bool,
+        Field(
+            description=(
+                "Include every shift. Only needed when you pass no shift_ids and no "
+                "group_ids, and it cannot be combined with either."
+            )
+        ),
+    ] = False,
 ) -> str:
     """List the volunteers who signed up for shifts between two dates.
 
     Returns names, so it only works when the server runs with
-    PINKBEE_ALLOW_PERSONAL_DATA=true. Give shift_ids, or group_ids, or neither
-    for every shift.
+    PINKBEE_ALLOW_PERSONAL_DATA=true.
+
+    Say which shifts you mean with shift_ids or group_ids. An id that does not exist
+    is an error rather than an empty filter, so a typo can never widen the answer to
+    the whole roster. To ask for every shift on purpose, pass all_shifts=true.
+
+    The date range is limited (see PINKBEE_MAX_REGISTRATION_DAYS) to keep one call
+    from exporting months of personal data at once.
 
     Returns:
         str: JSON with this shape:
@@ -531,41 +592,43 @@ async def pinkbee_list_registrations(
              "start_time": str, "end_time": str, "hours": float}
           ]
         }
-        On failure or when switched off, "Error: <reason>".
+        On failure, or when personal data is switched off, the tool fails with an
+        explanation of what to change.
 
     Examples:
-        - "Who is scheduled in July and August?" ->
-          start_date="2026-07-01", end_date="2026-08-31".
         - "Who signed up for the Shop shifts?" -> group_ids=[2].
+        - "Who is scheduled in August?" -> start_date="2026-08-01",
+          end_date="2026-08-31", all_shifts=true.
     """
     try:
-        refusal = personal_data_blocked()
-        if refusal:
-            return refusal
+        require_personal_data()
+        check_id_list("shift_ids", shift_ids)
+        check_id_list("group_ids", group_ids)
 
         first_day = parse_date(start_date)
         last_day = parse_date(end_date)
         if last_day < first_day:
-            return f"Error: end_date {last_day} is before start_date {first_day}."
+            raise ToolError(f"end_date {last_day} is before start_date {first_day}.")
+        days = (last_day - first_day).days + 1
+        if days > config.max_registration_days:
+            raise ToolError(
+                f"that range is {days} days; at most {config.max_registration_days} are "
+                "allowed (PINKBEE_MAX_REGISTRATION_DAYS). Ask for a shorter period."
+            )
 
-        wanted_shift_ids = list(shift_ids or [])
-        if group_ids:
-            from_groups = await shift_ids_for_groups(group_ids)
-            log.debug("groups %s map to shifts %s", group_ids, from_groups)
-            wanted_shift_ids += from_groups
-        wanted_shift_ids = sorted(set(wanted_shift_ids))
+        wanted_shift_ids = await resolve_shift_filter(shift_ids, group_ids, all_shifts)
         log.debug(
-            "registrations for shifts %s between %s and %s",
-            wanted_shift_ids or "all",
+            "registrations for shifts %s over %s days from %s",
+            wanted_shift_ids or "all (asked for explicitly)",
+            days,
             first_day,
-            last_day,
         )
 
         rows = await source.registrations(
             wanted_shift_ids, first_day.isoformat(), last_day.isoformat()
         )
         if not isinstance(rows, list):
-            return "Error: Pinkbee did not return a list of registrations."
+            raise ToolError("Pinkbee did not return a list of registrations.")
 
         # The report only gives a shift code, so add the shift id back.
         shift_id_of_code = await shift_id_by_code()
@@ -589,12 +652,13 @@ async def pinkbee_list_registrations(
                 "start_date": first_day.isoformat(),
                 "end_date": last_day.isoformat(),
                 "shift_ids": wanted_shift_ids,
+                "all_shifts": all_shifts,
                 "count": len(registrations),
                 "registrations": registrations,
             }
         )
     except Exception as problem:
-        return describe_error(problem)
+        raise as_tool_error(problem) from problem
 
 
 # ---------------------------------------------------------------------------
@@ -611,6 +675,72 @@ async def shift_ids_for_groups(group_ids: list[int]) -> list[int]:
         for shift in week
         if isinstance(shift, dict) and wanted & set(shift.get("employee_group_ids") or [])
     ]
+
+
+async def known_ids() -> tuple[set[int], set[int]]:
+    """The group ids and shift ids that actually exist right now."""
+    week = await source.week_schedule(roster.monday_of(today()).isoformat())
+    groups = await source.groups()
+    group_ids = {group.get("id") for group in groups if isinstance(group, dict)}
+    shift_ids = {shift.get("id") for shift in week if isinstance(shift, dict)}
+    return group_ids, shift_ids
+
+
+async def resolve_shift_filter(
+    shift_ids: list[int] | None, group_ids: list[int] | None, all_shifts: bool
+) -> list[int]:
+    """Work out which shift ids a filter means, refusing anything unclear.
+
+    An empty list means "every shift" to Pinkbee, so it must only ever be returned
+    when the caller deliberately asked for that. A filter that matches nothing has to
+    be an error: silently widening it to every shift would hand back the whole
+    roster, including everyone's name.
+    """
+    asked_for_a_filter = bool(shift_ids) or bool(group_ids)
+
+    if not asked_for_a_filter:
+        if not all_shifts:
+            raise ToolError(
+                "give shift_ids or group_ids to say which shifts you mean, or pass "
+                "all_shifts=true if you really want every shift. Use "
+                "pinkbee_list_groups_and_shifts to find the ids."
+            )
+        return []  # deliberately unfiltered
+
+    if all_shifts:
+        raise ToolError(
+            "all_shifts=true cannot be combined with shift_ids or group_ids. Drop the "
+            "filter, or drop all_shifts."
+        )
+
+    existing_groups, existing_shifts = await known_ids()
+
+    unknown_groups = sorted(set(group_ids or []) - existing_groups)
+    if unknown_groups:
+        raise ToolError(
+            f"no volunteer group with id {unknown_groups}. Use "
+            "pinkbee_list_groups_and_shifts to see the ids that exist."
+        )
+
+    unknown_shifts = sorted(set(shift_ids or []) - existing_shifts)
+    if unknown_shifts:
+        raise ToolError(
+            f"no shift with id {unknown_shifts}. Use pinkbee_list_groups_and_shifts "
+            "to see the ids that exist."
+        )
+
+    resolved = set(shift_ids or [])
+    if group_ids:
+        from_groups = await shift_ids_for_groups(group_ids)
+        log.debug("groups %s map to shifts %s", group_ids, from_groups)
+        if not from_groups and not resolved:
+            raise ToolError(
+                f"group {sorted(group_ids)} exists but has no shifts, so there is "
+                "nothing to report on."
+            )
+        resolved |= set(from_groups)
+
+    return sorted(resolved)
 
 
 async def shift_id_by_code() -> dict[str, int]:

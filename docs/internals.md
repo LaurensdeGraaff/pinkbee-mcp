@@ -2,7 +2,7 @@
 
 ## Code layout
 
-Six small files, each with one job:
+Small files, each with one job:
 
 | File | Job |
 | --- | --- |
@@ -11,7 +11,8 @@ Six small files, each with one job:
 | [live.py](../src/pinkbee_mcp/live.py) | The real Pinkbee data source: log in, then GET |
 | [roster.py](../src/pinkbee_mcp/roster.py) | Flatten a week and work out open spots. No network, no I/O |
 | [server.py](../src/pinkbee_mcp/server.py) | The six tools |
-| [\_\_main\_\_.py](../src/pinkbee_mcp/__main__.py) | Start it, pick the transport, check the token |
+| [logs.py](../src/pinkbee_mcp/logs.py) | Logging, and the two middlewares |
+| [\_\_main\_\_.py](../src/pinkbee_mcp/__main__.py) | Start it, pick the transport, check tokens and origins |
 
 Plus [healthcheck.py](../src/pinkbee_mcp/healthcheck.py) for the container probe.
 
@@ -24,13 +25,41 @@ why the tests never need a real Pinkbee instance.
 capacity rules live there, which is why they are easy to test and hard to get wrong
 twice.
 
-## Tools never raise
+## How failures are reported
 
-Every tool wraps its body in `try` / `except Exception` and returns a short
-`Error: ...` sentence. This is on purpose: an MCP client shows the model that
-sentence, so an actionable message ("Pinkbee did not accept the login. Check
-PINKBEE_LOGIN and PINKBEE_PASSWORD.") is worth far more than a protocol-level
-failure. `ruff` is configured to allow the blind `except` in `server.py` only.
+Every tool wraps its body in `try` / `except Exception` and re-raises as `ToolError`
+with one actionable sentence. The SDK turns that into a result flagged
+`isError: true`, so a client can tell a failure from an answer, while the model still
+reads something it can act on ("no volunteer group with id [999999]. Use
+pinkbee_list_groups_and_shifts to see the ids that exist."). `ruff` is configured to
+allow the blind `except` in `server.py` only.
+
+An earlier version *returned* those sentences as normal results, which left
+`isError: false` on every failure. Don't go back to that.
+
+## The two middlewares
+
+Both live in `logs.py` and are registered on the `MCPServer`:
+
+- `StrictArguments` refuses a `tools/call` carrying an argument the tool does not
+  have. The SDK silently drops unknown arguments, and a dropped argument on
+  `pinkbee_list_registrations` is a dropped *filter* — which widens the answer instead
+  of failing. `setup()` fills it in from the tools' own schemas, so it cannot drift.
+- `RequestLogger` logs every call: what was asked, how long it took, and a summary of
+  the answer that contains counts but never rows.
+
+## Never let a filter widen
+
+`resolve_shift_filter()` in `server.py` is the one place that turns a requested filter
+into shift ids. It exists because an empty list means *every shift* to Pinkbee, so:
+
+- no filter and no `all_shifts=true` → error;
+- a group or shift id that does not exist → error naming the id;
+- a group that exists but has no shifts → error;
+- `all_shifts=true` together with a filter → error.
+
+Only a deliberate `all_shifts=true` ever produces the empty, unfiltered query. The
+bug this replaced returned every registration in the range for `group_ids=[999999]`.
 
 ## Ids
 
@@ -102,6 +131,8 @@ Pinkbee instance.
 | [test_live.py](../tests/test_live.py) | Login, session reuse and renewal, which URL each read uses |
 | [test_tools.py](../tests/test_tools.py) | The six tools, including the personal-data refusals |
 | [test_config.py](../tests/test_config.py) | Environment parsing and every refusal to start |
+| [test_logs.py](../tests/test_logs.py) | Log summaries, strict arguments, and no personal data in our lines |
+| [test_transport.py](../tests/test_transport.py) | Origin/Host allowlists and the bearer challenge |
 
 ## MCP SDK version
 

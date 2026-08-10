@@ -1,14 +1,15 @@
 # pinkbee-mcp
+> **Unofficial community integration; not affiliated with or supported by Pinkbee.**
+> 
+> **Proof of concept.**
 
 A read-only [MCP](https://modelcontextprotocol.io) server for **Pinkbee**
 (`*.mijnpinkbee.nl`), an online platform for planning shifts and managing
-volunteers.
+volunteers. 
 
 It lets an AI assistant answer questions about a roster — which shifts still need
 people, who is scheduled, who is in which group — and nothing more: it cannot book,
-cancel or change anything. Works with any Pinkbee instance.
-
-> **Proof of concept.**
+cancel or change anything. 
 
 ## Run it
 
@@ -76,9 +77,14 @@ see [docs/deploying.md](docs/deploying.md).
   `PINKBEE_DATA_SOURCE=live` *and* credentials, or the server refuses to start.
 - **Personal data is off by default.** The two tools that return names or email
   addresses refuse until you set `PINKBEE_ALLOW_PERSONAL_DATA=true`.
-- **Not open to the network.** Optional bearer token, and the container publishes on
-  `127.0.0.1` only. There is no TLS inside it, so put a reverse proxy in front if it
-  has to leave the host.
+- **A filter can never widen by accident.** An id that does not exist is an error, an
+  unknown argument name is refused, and asking for every shift takes an explicit
+  `all_shifts=true`. Date ranges and id lists are capped.
+- **Credentials only over HTTPS.** A plain `http://` Pinkbee URL is refused, since
+  logging in sends the password.
+- **Not open to the network.** Optional bearer token, `Origin`/`Host` checks against
+  DNS rebinding, and the container publishes on `127.0.0.1` only. There is no TLS
+  inside it, so put a reverse proxy in front if it has to leave the host.
 - **One exception, on purpose:** `PINKBEE_LOG_LEVEL=DEBUG` also turns on the
   libraries' debug output, which prints whole response bodies — so personal data does
   appear in debug logs. Use it while troubleshooting, not in normal running. See
@@ -93,3 +99,7 @@ see [docs/deploying.md](docs/deploying.md).
 | [docs/endpoints.md](docs/endpoints.md) | The Pinkbee API: login, the endpoints used, how to find more |
 | [docs/login_sessions.md](docs/login_sessions.md) | How the session cookie is obtained, reused and renewed |
 | [docs/internals.md](docs/internals.md) | Code layout, the mock data, running the tests |
+
+## Licence
+
+[MIT](LICENSE).

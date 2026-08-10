@@ -4,11 +4,13 @@ import logging
 import re
 
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 
 from pinkbee_mcp import server
 from pinkbee_mcp.config import Config
 from pinkbee_mcp.logs import (
     RequestLogger,
+    StrictArguments,
     answer_text_of,
     describe_arguments,
     setup_logging,
@@ -167,7 +169,9 @@ async def test_debug_logs_of_every_tool_contain_no_email_address(caplog):
     await server.pinkbee_get_week_schedule(dates=["2026-08-13"])
     await server.pinkbee_list_open_shifts(start_date="2026-08-10", weeks=2)
     await server.pinkbee_list_group_emails(group_ids=[2, 15], with_names=True)
-    await server.pinkbee_list_registrations(start_date="2026-08-10", end_date="2026-08-31")
+    await server.pinkbee_list_registrations(
+        start_date="2026-08-10", end_date="2026-08-31", all_shifts=True
+    )
 
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert logged, "expected some debug output"
@@ -177,7 +181,9 @@ async def test_debug_logs_of_every_tool_contain_no_email_address(caplog):
 async def test_debug_logs_of_every_tool_contain_no_volunteer_name(caplog):
     caplog.set_level(logging.DEBUG)
     await server.pinkbee_list_group_emails(group_ids=[2], with_names=True)
-    await server.pinkbee_list_registrations(start_date="2026-08-10", end_date="2026-08-31")
+    await server.pinkbee_list_registrations(
+        start_date="2026-08-10", end_date="2026-08-31", all_shifts=True
+    )
 
     logged = "\n".join(record.getMessage() for record in caplog.records)
     for surname in ["Bakker", "de Vries", "Smit", "Jansen", "Molenaar", "Visser"]:
@@ -218,3 +224,77 @@ def test_setup_logging_falls_back_to_info_for_nonsense():
         assert logging.getLogger().level == logging.INFO
     finally:
         setup_logging("INFO")
+
+
+# --- StrictArguments ------------------------------------------------------
+
+
+async def test_strict_arguments_rejects_an_argument_that_does_not_exist():
+    """A typo must fail, not quietly drop a filter and widen the answer."""
+    strict = StrictArguments({"pinkbee_list_registrations": {"start_date", "group_ids"}})
+    ctx = FakeContext(
+        params={
+            "name": "pinkbee_list_registrations",
+            "arguments": {"start_date": "2026-08-10", "group_id": 2},
+        }
+    )
+
+    async def call_next(_):
+        raise AssertionError("the tool should never have been reached")
+
+    with pytest.raises(ToolError, match=r"has no argument \['group_id'\]"):
+        await strict(ctx, call_next)
+
+
+async def test_strict_arguments_lists_the_real_argument_names():
+    strict = StrictArguments({"a_tool": {"weeks", "start_date"}})
+    ctx = FakeContext(params={"name": "a_tool", "arguments": {"week": 3}})
+
+    async def call_next(_):
+        return None
+
+    with pytest.raises(ToolError, match="It accepts: start_date, weeks"):
+        await strict(ctx, call_next)
+
+
+async def test_strict_arguments_lets_correct_arguments_through():
+    strict = StrictArguments({"a_tool": {"weeks"}})
+    ctx = FakeContext(params={"name": "a_tool", "arguments": {"weeks": 3}})
+
+    async def call_next(_):
+        return {"content": [{"type": "text", "text": "ok"}]}
+
+    assert await strict(ctx, call_next) == {"content": [{"type": "text", "text": "ok"}]}
+
+
+async def test_strict_arguments_ignores_methods_that_are_not_tool_calls():
+    strict = StrictArguments({})
+    ctx = FakeContext(method="tools/list", params={"anything": 1})
+
+    async def call_next(_):
+        return {"tools": []}
+
+    assert await strict(ctx, call_next) == {"tools": []}
+
+
+async def test_strict_arguments_ignores_a_tool_it_does_not_know():
+    """An unknown tool is the SDK's problem to report, not this middleware's."""
+    strict = StrictArguments({})
+    ctx = FakeContext(params={"name": "not_a_tool", "arguments": {"x": 1}})
+
+    async def call_next(_):
+        return {"content": [{"type": "text", "text": "unknown tool"}]}
+
+    assert await strict(ctx, call_next) is not None
+
+
+async def test_the_real_tool_schemas_feed_the_strict_check():
+    allowed = await server.allowed_arguments()
+    assert allowed["pinkbee_list_registrations"] == {
+        "start_date",
+        "end_date",
+        "shift_ids",
+        "group_ids",
+        "all_shifts",
+    }
+    assert allowed["pinkbee_check_connection"] == set()
