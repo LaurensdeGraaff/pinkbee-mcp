@@ -1,0 +1,29 @@
+services:
+  pinkbee-mcp:
+    # Published image. Pin a version instead of :latest for a real deployment.
+    image: withoutanickname/pinkbee-mcp:latest
+    # To build from this checkout instead, uncomment the next line and run
+    # `docker compose up -d --build`.
+    # build: .
+    container_name: pinkbee-mcp
+    restart: unless-stopped
+
+    # Settings and secrets come from .env, never from the image.
+    # Without a .env the container starts on mock data, which is safe.
+    env_file:
+      - path: .env
+        required: false
+
+    ports:
+      # Only reachable from this machine. There is no TLS in the container, so
+      # put a reverse proxy in front if it has to leave the host.
+      - "127.0.0.1:8087:8080"
+
+    # The server writes nothing to disk.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

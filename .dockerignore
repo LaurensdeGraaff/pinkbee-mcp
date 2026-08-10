@@ -1,0 +1,42 @@
+# Keeps the build context small and, more importantly, keeps secrets out of it.
+# The Dockerfile only needs pyproject.toml, README.md and src/.
+
+# --- secrets: never in the build context ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- version control and CI ---
+.git
+.gitignore
+.github
+.gitlab-ci.yml
+
+# --- local Python clutter ---
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.ruff_cache
+.mypy_cache
+dist
+build
+
+# --- not needed at runtime ---
+tests
+docs
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile
+.dockerignore
+
+# --- editor and OS noise ---
+.idea
+.vscode
+.DS_Store
+*.swp
