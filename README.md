@@ -12,11 +12,14 @@ people, who is scheduled, who is in which group — and nothing more: it cannot 
 cancel or change anything. 
 
 ## Run it
-
+1. Get the docker compose file
+```bash
+curl -fsSLO https://raw.githubusercontent.com/withoutanickname/pinkbee-mcp/main/docker-compose.yml
+```
+2. Deploy docker compose
 ```bash
 docker compose up -d
 ```
-
 That is all. It pulls `withoutanickname/pinkbee-mcp` and starts on **built-in sample
 data**, so there is nothing to configure and no risk to anyone's real roster. The MCP
 endpoint is then on `http://<server-lan-ip>:8087/mcp` (and on
