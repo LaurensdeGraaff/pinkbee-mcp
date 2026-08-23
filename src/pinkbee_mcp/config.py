@@ -14,8 +14,18 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 MOCK = "mock"
 LIVE = "live"
 
-#: Host names that count as "this machine" for the plain-HTTP opt-in and for the
-#: default Origin/Host allowlist.
+AVAILABLE_CALLS = frozenset(
+    {
+        "pinkbee_check_connection",
+        "pinkbee_get_week_schedule",
+        "pinkbee_list_group_emails",
+        "pinkbee_list_groups_and_shifts",
+        "pinkbee_list_open_shifts",
+        "pinkbee_list_registrations",
+    }
+)
+
+#: Host names that count as "this machine" for the plain-HTTP opt-in.
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
 
 
@@ -71,27 +81,19 @@ class Config:
     # is refused unless this is on AND the host is this machine.
     allow_insecure_http_to_localhost: bool = False
 
-    # Upper bounds on what one tool call may ask for. They keep a single call from
-    # exporting a year of personal data or producing an answer too large to read.
-    max_registration_days: int = 120
-    max_ids_per_filter: int = 50
-    max_dates: int = 12
-    max_weeks: int = 12
-
     # "Today" follows this timezone, not the container's UTC clock.
     timezone: str = "Europe/Amsterdam"
 
-    # How the MCP server is reachable.
-    transport: str = "streamable-http"
-    host: str = "0.0.0.0"
-    port: int = 8080
-    path: str = "/mcp"
+    # HTTP authentication. The host, port and path are fixed so they cannot get out
+    # of sync with Docker's port and health check.
     token: str = ""
 
-    # Origin and Host values the HTTP transport accepts, on top of loopback. Needed
-    # when a reverse proxy fronts the server under its own name.
-    allowed_origins: tuple[str, ...] = field(default_factory=tuple)
-    allowed_hosts: tuple[str, ...] = field(default_factory=tuple)
+    # Empty means every sender that can reach the port. Entries are exact sender IPs
+    # or DNS names that resolve to sender IPs when the server starts.
+    allowed_senders: tuple[str, ...] = field(default_factory=tuple)
+
+    # Calls removed from both tools/list and tools/call at startup.
+    disabled_calls: tuple[str, ...] = field(default_factory=tuple)
 
     timeout_seconds: int = 20
 
@@ -100,7 +102,7 @@ class Config:
         return (
             f"Config(data_source={self.data_source!r}, base_url={self.base_url!r}, "
             f"login={self.login!r}, allow_personal_data={self.allow_personal_data}, "
-            f"timezone={self.timezone!r}, transport={self.transport!r}, port={self.port})"
+            f"timezone={self.timezone!r})"
         )
 
     @property
@@ -144,9 +146,14 @@ def load_config() -> Config:
     except (ZoneInfoNotFoundError, ValueError):
         raise ConfigError(f"PINKBEE_TIMEZONE {timezone!r} is not a known timezone name") from None
 
-    transport = read_text("PINKBEE_MCP_TRANSPORT", "streamable-http").lower() or "streamable-http"
-    if transport not in {"streamable-http", "stdio"}:
-        raise ConfigError("PINKBEE_MCP_TRANSPORT must be 'streamable-http' or 'stdio'")
+    disabled_calls = tuple(dict.fromkeys(read_list("PINKBEE_DISABLED_CALLS")))
+    unknown_calls = sorted(set(disabled_calls) - AVAILABLE_CALLS)
+    if unknown_calls:
+        raise ConfigError(
+            "PINKBEE_DISABLED_CALLS contains unknown calls: "
+            + ", ".join(unknown_calls)
+            + ". See README.md for the available calls."
+        )
 
     return Config(
         data_source=data_source,
@@ -155,30 +162,12 @@ def load_config() -> Config:
         password=password,
         allow_personal_data=read_flag("PINKBEE_ALLOW_PERSONAL_DATA", False),
         allow_insecure_http_to_localhost=allow_insecure,
-        max_registration_days=positive("PINKBEE_MAX_REGISTRATION_DAYS", 120),
-        max_ids_per_filter=positive("PINKBEE_MAX_IDS_PER_FILTER", 50),
-        max_dates=positive("PINKBEE_MAX_DATES", 12),
-        max_weeks=positive("PINKBEE_MAX_WEEKS", 12),
         timezone=timezone,
-        transport=transport,
-        host=read_text("PINKBEE_MCP_HOST", "0.0.0.0") or "0.0.0.0",
-        port=read_number("PINKBEE_MCP_PORT", 8080),
-        path=read_text("PINKBEE_MCP_PATH", "/mcp") or "/mcp",
         token=read_text("PINKBEE_MCP_TOKEN"),
-        allowed_origins=tuple(read_list("PINKBEE_ALLOWED_ORIGINS")),
-        allowed_hosts=tuple(read_list("PINKBEE_ALLOWED_HOSTS")),
+        allowed_senders=tuple(read_list("PINKBEE_ALLOWED_SENDERS")),
+        disabled_calls=disabled_calls,
         timeout_seconds=read_number("PINKBEE_TIMEOUT_SECONDS", 20),
     )
-
-
-def positive(name: str, default: int) -> int:
-    """A limit that has to be at least 1."""
-    value = read_number(name, default)
-    if value < 1:
-        raise ConfigError(f"{name} must be 1 or more, got {value}")
-    return value
-
-
 def is_loopback(host: str) -> bool:
     return host.split(":")[0].lower() in LOOPBACK_HOSTS or host.lower() in LOOPBACK_HOSTS
 

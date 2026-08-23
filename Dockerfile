@@ -9,11 +9,7 @@ RUN pip wheel --no-cache-dir --no-deps -w /wheels .
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PINKBEE_MCP_TRANSPORT=streamable-http \
-    PINKBEE_MCP_HOST=0.0.0.0 \
-    PINKBEE_MCP_PORT=8080
+    PYTHONDONTWRITEBYTECODE=1
 
 COPY --from=build /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels

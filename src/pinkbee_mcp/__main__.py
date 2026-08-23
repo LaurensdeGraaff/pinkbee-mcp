@@ -1,27 +1,30 @@
 """Starts the server: `python -m pinkbee_mcp`.
 
-Two ways to run it:
-
-- streamable-http (the default, and what the Docker container uses): serves the
-  MCP endpoint over HTTP, optionally behind a bearer token.
-- stdio: for a desktop MCP client running on the same machine.
+Serves the MCP endpoint over streamable HTTP, optionally behind a bearer token
+and/or a sender-IP allowlist.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hmac
+import ipaddress
 import logging
 import os
+import socket
 import sys
 
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .config import LOOPBACK_HOSTS, Config, ConfigError, load_config
+from .config import ConfigError, load_config
 from .logs import setup_logging
 from .server import allowed_arguments, mcp, setup, strict_arguments
 
 log = logging.getLogger("pinkbee_mcp")
+
+HTTP_HOST = "0.0.0.0"
+HTTP_PORT = 8080
+HTTP_PATH = "/mcp"
 
 
 def require_token(app, token: str):
@@ -53,34 +56,87 @@ def require_token(app, token: str):
     return check
 
 
-def transport_security(config: Config) -> TransportSecuritySettings:
-    """Which Origin and Host values the HTTP transport accepts.
+def reject_browser_requests(app):
+    """Reject browser-originated requests without adding a Host/Origin allowlist.
 
-    A browser page on any site can POST to a localhost port. Without this check, such
-    a page could drive this server and read a whole roster: the DNS-rebinding attack
-    the MCP transport spec requires servers to block. An unknown Host is answered
-    with 421 and an unknown Origin with 403.
-
-    Loopback is allowed out of the box, with any port. The port has to be a wildcard
-    because Docker publishes the container's 8080 on whatever host port you choose,
-    and the Host header carries the port the *client* used. Any port on loopback is
-    still loopback, so this gives nothing away.
-
-    A reverse proxy fronting the server under its own name adds it through
-    PINKBEE_ALLOWED_HOSTS and PINKBEE_ALLOWED_ORIGINS.
+    Normal MCP clients do not send Origin. Rejecting every supplied Origin blocks a
+    web page from driving a LAN MCP through DNS rebinding while keeping deployment
+    independent of the destination hostname used by non-browser clients.
     """
-    hosts = [pattern for base in LOOPBACK_HOSTS for pattern in (base, f"{base}:*")]
-    origins = [
-        f"{scheme}://{base}{suffix}"
-        for scheme in ("http", "https")
-        for base in LOOPBACK_HOSTS
-        for suffix in ("", ":*")
-    ]
-    return TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=hosts + list(config.allowed_hosts),
-        allowed_origins=origins + list(config.allowed_origins),
-    )
+    from starlette.responses import JSONResponse
+
+    async def check(scope, receive, send):
+        if scope["type"] == "http":
+            headers = {key.decode().lower(): value.decode() for key, value in scope["headers"]}
+            if headers.get("origin"):
+                answer = JSONResponse(
+                    {
+                        "error": "forbidden",
+                        "error_description": "browser Origin requests are not accepted",
+                    },
+                    status_code=403,
+                )
+                await answer(scope, receive, send)
+                return
+        await app(scope, receive, send)
+
+    return check
+
+
+def resolve_senders(entries: tuple[str, ...]) -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Resolve exact IP addresses and DNS names to the sender IPs they permit."""
+    addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
+    for entry in entries:
+        try:
+            addresses.add(ipaddress.ip_address(entry))
+            continue
+        except ValueError:
+            pass
+        try:
+            answers = socket.getaddrinfo(entry, None, type=socket.SOCK_STREAM)
+        except socket.gaierror as problem:
+            raise ConfigError(
+                f"PINKBEE_ALLOWED_SENDERS entry {entry!r} could not be resolved: {problem}"
+            ) from problem
+        addresses.update(ipaddress.ip_address(answer[4][0]) for answer in answers)
+    return addresses
+
+
+def allow_senders(app, entries: tuple[str, ...]):
+    """Allow all senders by default, or only TCP peers selected by IP/DNS name."""
+    if not entries:
+        return app
+
+    allowed = resolve_senders(entries)
+    from starlette.responses import JSONResponse
+
+    async def check(scope, receive, send):
+        if scope["type"] == "http":
+            client = scope.get("client")
+            try:
+                sender = ipaddress.ip_address(client[0])
+            except (TypeError, ValueError):
+                sender = None
+            if sender not in allowed:
+                answer = JSONResponse(
+                    {
+                        "error": "forbidden",
+                        "error_description": "the sender IP is not in PINKBEE_ALLOWED_SENDERS",
+                    },
+                    status_code=403,
+                )
+                await answer(scope, receive, send)
+                return
+        await app(scope, receive, send)
+
+    return check
+
+
+def disable_calls(server, names: tuple[str, ...]) -> None:
+    """Remove blacklisted calls so clients neither discover nor invoke them."""
+    for name in names:
+        server.remove_tool(name)
+        log.info("disabled MCP call: %s", name)
 
 
 def main() -> int:
@@ -94,29 +150,22 @@ def main() -> int:
         return 2
 
     setup(config)
+    disable_calls(mcp, config.disabled_calls)
     # Tell the strict-argument check what each tool actually accepts.
     strict_arguments.allowed_arguments = asyncio.run(allowed_arguments())
 
     if config.data_source == "live":
         log.warning("Reading from a live Pinkbee instance. All requests are read-only.")
 
-    if config.transport == "stdio":
-        mcp.run(transport="stdio")
-        return 0
-
-    security = transport_security(config)
-    log.info(
-        "accepting Host %s and Origin %s",
-        ", ".join(security.allowed_hosts),
-        ", ".join(security.allowed_origins),
-    )
-
     app = mcp.streamable_http_app(
-        streamable_http_path=config.path,
+        streamable_http_path=HTTP_PATH,
         stateless_http=True,
-        host=config.host,
-        transport_security=security,
+        host=HTTP_HOST,
+        # Sender access is enforced below. Destination Host/Origin configuration
+        # made LAN and reverse-proxy deployments unnecessarily fragile.
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
+    app = reject_browser_requests(app)
     if config.token:
         app = require_token(app, config.token)
     else:
@@ -124,10 +173,22 @@ def main() -> int:
             "PINKBEE_MCP_TOKEN is not set, so anyone who can reach the port can use "
             "this server. Only do this on a trusted network."
         )
+    try:
+        app = allow_senders(app, config.allowed_senders)
+    except ConfigError as problem:
+        print(f"Configuration error: {problem}", file=sys.stderr)
+        return 2
+    if config.allowed_senders:
+        log.info(
+            "allowing sender IPs resolved from PINKBEE_ALLOWED_SENDERS: %s",
+            ", ".join(config.allowed_senders),
+        )
+    else:
+        log.info("allowing every sender that can reach the MCP port")
 
     import uvicorn
 
-    uvicorn.run(app, host=config.host, port=config.port, log_level="info")
+    uvicorn.run(app, host=HTTP_HOST, port=HTTP_PORT, log_level="info")
     return 0
 
 

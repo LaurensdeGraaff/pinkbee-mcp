@@ -132,7 +132,7 @@ Pinkbee instance.
 | [test_tools.py](../tests/test_tools.py) | The six tools, including the personal-data refusals |
 | [test_config.py](../tests/test_config.py) | Environment parsing and every refusal to start |
 | [test_logs.py](../tests/test_logs.py) | Log summaries, strict arguments, and no personal data in our lines |
-| [test_transport.py](../tests/test_transport.py) | Origin/Host allowlists and the bearer challenge |
+| [test_transport.py](../tests/test_transport.py) | Sender-IP allowlisting and the bearer challenge |
 
 ## MCP SDK version
 

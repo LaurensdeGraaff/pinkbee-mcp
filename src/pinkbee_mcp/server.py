@@ -54,6 +54,13 @@ READ_ONLY = {
     "open_world_hint": True,
 }
 
+# Fixed safety limits keep responses useful and prevent bulk personal-data exports
+# without adding deployment knobs that almost nobody needs.
+MAX_REGISTRATION_DAYS = 120
+MAX_IDS_PER_FILTER = 50
+MAX_DATES = 12
+MAX_WEEKS = 12
+
 # Set by setup(); the tools read these.
 config: Config | None = None
 source: MockPinkbee | LivePinkbee | None = None
@@ -125,11 +132,10 @@ def require_personal_data() -> None:
 
 
 def check_id_list(name: str, ids: list[int] | None) -> None:
-    """Refuse an id filter longer than the configured limit."""
-    if ids is not None and len(ids) > config.max_ids_per_filter:
+    """Refuse an id filter longer than the safety limit."""
+    if ids is not None and len(ids) > MAX_IDS_PER_FILTER:
         raise ToolError(
-            f"{name} has {len(ids)} entries; at most {config.max_ids_per_filter} are "
-            "allowed (PINKBEE_MAX_IDS_PER_FILTER)."
+            f"{name} has {len(ids)} entries; at most {MAX_IDS_PER_FILTER} are allowed."
         )
 
 
@@ -300,10 +306,9 @@ async def pinkbee_get_week_schedule(
         - "Where are the gaps in that week?" -> add only_open_shifts=true.
     """
     try:
-        if len(dates) > config.max_dates:
+        if len(dates) > MAX_DATES:
             raise ToolError(
-                f"{len(dates)} dates given; at most {config.max_dates} are allowed "
-                "(PINKBEE_MAX_DATES)."
+                f"{len(dates)} dates given; at most {MAX_DATES} are allowed."
             )
 
         # Several dates can land in the same week. Read each week only once, but
@@ -391,11 +396,8 @@ async def pinkbee_list_open_shifts(
         - "Any gaps for the Shop group in the next 6 weeks?" -> group_ids=[2], weeks=6.
     """
     try:
-        if weeks > config.max_weeks:
-            raise ToolError(
-                f"{weeks} weeks asked for; at most {config.max_weeks} are allowed "
-                "(PINKBEE_MAX_WEEKS)."
-            )
+        if weeks > MAX_WEEKS:
+            raise ToolError(f"{weeks} weeks asked for; at most {MAX_WEEKS} are allowed.")
         check_id_list("shift_ids", shift_ids)
         check_id_list("group_ids", group_ids)
 
@@ -579,8 +581,8 @@ async def pinkbee_list_registrations(
     is an error rather than an empty filter, so a typo can never widen the answer to
     the whole roster. To ask for every shift on purpose, pass all_shifts=true.
 
-    The date range is limited (see PINKBEE_MAX_REGISTRATION_DAYS) to keep one call
-    from exporting months of personal data at once.
+    The date range is limited to keep one call from exporting months of personal
+    data at once.
 
     Returns:
         str: JSON with this shape:
@@ -610,10 +612,10 @@ async def pinkbee_list_registrations(
         if last_day < first_day:
             raise ToolError(f"end_date {last_day} is before start_date {first_day}.")
         days = (last_day - first_day).days + 1
-        if days > config.max_registration_days:
+        if days > MAX_REGISTRATION_DAYS:
             raise ToolError(
-                f"that range is {days} days; at most {config.max_registration_days} are "
-                "allowed (PINKBEE_MAX_REGISTRATION_DAYS). Ask for a shorter period."
+                f"that range is {days} days; at most {MAX_REGISTRATION_DAYS} are "
+                "allowed. Ask for a shorter period."
             )
 
         wanted_shift_ids = await resolve_shift_filter(shift_ids, group_ids, all_shifts)

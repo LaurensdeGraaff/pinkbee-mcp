@@ -7,7 +7,7 @@ import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
 from pinkbee_mcp import server
-from pinkbee_mcp.config import Config
+from pinkbee_mcp.config import AVAILABLE_CALLS, Config
 from pinkbee_mcp.mock import MockPinkbee
 
 THIS_MONDAY = dt.date.today() - dt.timedelta(days=dt.date.today().weekday())
@@ -322,14 +322,7 @@ async def test_registrations_add_the_shift_id_back_to_each_row():
 
 async def test_exactly_six_read_only_tools_are_registered():
     tools = await server.mcp.list_tools()
-    assert {tool.name for tool in tools} == {
-        "pinkbee_check_connection",
-        "pinkbee_list_groups_and_shifts",
-        "pinkbee_get_week_schedule",
-        "pinkbee_list_open_shifts",
-        "pinkbee_list_group_emails",
-        "pinkbee_list_registrations",
-    }
+    assert {tool.name for tool in tools} == AVAILABLE_CALLS
     for tool in tools:
         assert tool.annotations.read_only_hint is True
         assert tool.annotations.destructive_hint is False
@@ -412,23 +405,13 @@ async def test_registrations_refuse_all_shifts_together_with_a_filter():
 
 async def test_registrations_refuse_too_long_a_date_range():
     allow_personal_data()
-    with pytest.raises(ToolError, match="PINKBEE_MAX_REGISTRATION_DAYS"):
+    with pytest.raises(ToolError, match="at most 120"):
         await server.pinkbee_list_registrations(
             start_date="2026-01-01", end_date="2026-12-31", all_shifts=True
         )
-
-
-async def test_the_date_range_limit_is_configurable():
-    server.setup(Config(allow_personal_data=True, max_registration_days=3), MockPinkbee())
-    with pytest.raises(ToolError, match="at most 3 are allowed"):
-        await server.pinkbee_list_registrations(
-            start_date="2026-08-10", end_date="2026-08-31", all_shifts=True
-        )
-
-
 async def test_registrations_refuse_an_oversized_id_list():
     allow_personal_data()
-    with pytest.raises(ToolError, match="PINKBEE_MAX_IDS_PER_FILTER"):
+    with pytest.raises(ToolError, match="at most 50"):
         await server.pinkbee_list_registrations(
             start_date="2026-08-10",
             end_date="2026-08-31",
@@ -437,20 +420,16 @@ async def test_registrations_refuse_an_oversized_id_list():
 
 
 async def test_week_schedule_refuses_too_many_dates():
-    server.setup(Config(max_dates=2), MockPinkbee())
-    with pytest.raises(ToolError, match="PINKBEE_MAX_DATES"):
-        await server.pinkbee_get_week_schedule(
-            dates=["2026-08-10", "2026-08-17", "2026-08-24"]
-        )
+    dates = [(dt.date(2026, 8, 10) + dt.timedelta(weeks=week)).isoformat() for week in range(13)]
+    with pytest.raises(ToolError, match="at most 12"):
+        await server.pinkbee_get_week_schedule(dates=dates)
 
 
 async def test_open_shifts_refuses_too_many_weeks():
-    server.setup(Config(max_weeks=2), MockPinkbee())
-    with pytest.raises(ToolError, match="PINKBEE_MAX_WEEKS"):
-        await server.pinkbee_list_open_shifts(weeks=5)
+    with pytest.raises(ToolError, match="at most 12"):
+        await server.pinkbee_list_open_shifts(weeks=13)
 
 
 async def test_open_shifts_refuses_an_oversized_id_list():
-    server.setup(Config(max_ids_per_filter=3), MockPinkbee())
-    with pytest.raises(ToolError, match="at most 3 are allowed"):
-        await server.pinkbee_list_open_shifts(group_ids=[1, 2, 4, 5])
+    with pytest.raises(ToolError, match="at most 50"):
+        await server.pinkbee_list_open_shifts(group_ids=list(range(51)))

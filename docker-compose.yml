@@ -5,19 +5,25 @@ services:
     # To build from this checkout instead, uncomment the next line and run
     # `docker compose up -d --build`.
     # build: .
-    container_name: pinkbee-mcp
     restart: unless-stopped
-
-    # Settings and secrets come from .env, never from the image.
-    # Without a .env the container starts on mock data, which is safe.
-    env_file:
-      - path: .env
-        required: false
+    environment:
+      PINKBEE_DATA_SOURCE: ${PINKBEE_DATA_SOURCE:-mock}
+      PINKBEE_BASE_URL: ${PINKBEE_BASE_URL:-}
+      PINKBEE_LOGIN: ${PINKBEE_LOGIN:-}
+      PINKBEE_PASSWORD: ${PINKBEE_PASSWORD:-}
+      PINKBEE_ALLOW_INSECURE_HTTP_TO_LOCALHOST: ${PINKBEE_ALLOW_INSECURE_HTTP_TO_LOCALHOST:-false}
+      PINKBEE_ALLOW_PERSONAL_DATA: ${PINKBEE_ALLOW_PERSONAL_DATA:-false}
+      PINKBEE_MCP_TOKEN: ${PINKBEE_MCP_TOKEN:-}
+      PINKBEE_ALLOWED_SENDERS: ${PINKBEE_ALLOWED_SENDERS:-}
+      PINKBEE_DISABLED_CALLS: ${PINKBEE_DISABLED_CALLS:-}
+      PINKBEE_TIMEZONE: ${PINKBEE_TIMEZONE:-Europe/Amsterdam}
+      PINKBEE_TIMEOUT_SECONDS: ${PINKBEE_TIMEOUT_SECONDS:-20}
+      PINKBEE_LOG_LEVEL: ${PINKBEE_LOG_LEVEL:-INFO}
 
     ports:
-      # Only reachable from this machine. There is no TLS in the container, so
-      # put a reverse proxy in front if it has to leave the host.
-      - "127.0.0.1:8087:8080"
+      # Reachable from the LAN by default. Use PINKBEE_ALLOWED_SENDERS to restrict
+      # the IP of the client/service making the request.
+      - "8087:8080"
 
     # The server writes nothing to disk.
     read_only: true
