@@ -6,9 +6,6 @@ services:
     # `docker compose up -d --build`.
     # build: .
     restart: unless-stopped
-
-    # Compose reads substitutions from .env automatically. Every supported setting
-    # and its default is visible here; no .env file is required for mock mode.
     environment:
       PINKBEE_DATA_SOURCE: ${PINKBEE_DATA_SOURCE:-mock}
       PINKBEE_BASE_URL: ${PINKBEE_BASE_URL:-}
