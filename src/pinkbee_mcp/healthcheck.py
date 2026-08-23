@@ -13,14 +13,13 @@ pinkbee_check_connection tool.
 
 from __future__ import annotations
 
-import os
 import socket
 import sys
 
 
 def main() -> int:
     host = "127.0.0.1"
-    port = int(os.environ.get("PINKBEE_MCP_PORT", "8080"))
+    port = 8080
     try:
         with socket.create_connection((host, port), timeout=4):
             return 0

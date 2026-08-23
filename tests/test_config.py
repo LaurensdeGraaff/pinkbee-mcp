@@ -11,9 +11,11 @@ ALL_VARIABLES = [
     "PINKBEE_PASSWORD",
     "PINKBEE_ALLOW_PERSONAL_DATA",
     "PINKBEE_TIMEZONE",
-    "PINKBEE_MCP_TRANSPORT",
-    "PINKBEE_MCP_PORT",
     "PINKBEE_MCP_TOKEN",
+    "PINKBEE_ALLOWED_SENDERS",
+    "PINKBEE_DISABLED_CALLS",
+    "PINKBEE_ALLOW_INSECURE_HTTP_TO_LOCALHOST",
+    "PINKBEE_TIMEOUT_SECONDS",
 ]
 
 
@@ -97,15 +99,41 @@ def test_an_unknown_timezone_is_rejected(monkeypatch):
         load_config()
 
 
-def test_an_unknown_transport_is_rejected(monkeypatch):
-    monkeypatch.setenv("PINKBEE_MCP_TRANSPORT", "sse")
-    with pytest.raises(ConfigError, match="streamable-http"):
-        load_config()
+def test_sender_allowlist_is_empty_by_default():
+    assert load_config().allowed_senders == ()
 
 
-def test_a_non_numeric_port_is_rejected(monkeypatch):
-    monkeypatch.setenv("PINKBEE_MCP_PORT", "eight-thousand")
-    with pytest.raises(ConfigError, match="whole number"):
+def test_sender_allowlist_accepts_ips_and_domains(monkeypatch):
+    monkeypatch.setenv("PINKBEE_ALLOWED_SENDERS", "192.168.1.42, agent.example.com")
+    assert load_config().allowed_senders == ("192.168.1.42", "agent.example.com")
+
+
+def test_disabled_calls_are_empty_by_default():
+    assert load_config().disabled_calls == ()
+
+
+def test_disabled_calls_are_read_as_a_list(monkeypatch):
+    monkeypatch.setenv(
+        "PINKBEE_DISABLED_CALLS",
+        "pinkbee_list_group_emails, pinkbee_list_registrations",
+    )
+    assert load_config().disabled_calls == (
+        "pinkbee_list_group_emails",
+        "pinkbee_list_registrations",
+    )
+
+
+def test_duplicate_disabled_calls_are_deduplicated(monkeypatch):
+    monkeypatch.setenv(
+        "PINKBEE_DISABLED_CALLS",
+        "pinkbee_check_connection,pinkbee_check_connection",
+    )
+    assert load_config().disabled_calls == ("pinkbee_check_connection",)
+
+
+def test_unknown_disabled_call_is_rejected(monkeypatch):
+    monkeypatch.setenv("PINKBEE_DISABLED_CALLS", "pinkbee_delete_everything")
+    with pytest.raises(ConfigError, match="unknown calls"):
         load_config()
 
 
