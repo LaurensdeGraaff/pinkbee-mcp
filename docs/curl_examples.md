@@ -22,31 +22,31 @@ The examples assume the default published port, `127.0.0.1:8087`.
 Start here. This is the source of truth for what each tool accepts:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | sed -n 's/^data: //p' | jq -r '.result.tools[] | "\(.name)  \(.inputSchema.properties | keys)"'
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | sed -n 's/^data: //p' | jq -r '.result.tools[] | "\(.name)  \(.inputSchema.properties | keys)"'
 ```
 
 ### Check the connection
 
 ```bash
-curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"pinkbee_check_connection","arguments":{}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text'
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"pinkbee_check_connection","arguments":{}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text'
 ```
 
 ### Look up group and shift ids
 
 ```bash
-curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"pinkbee_list_groups_and_shifts","arguments":{}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"pinkbee_list_groups_and_shifts","arguments":{}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
 ```
 
 ### The roster for one or more whole weeks
 
 ```bash
-curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"pinkbee_get_week_schedule","arguments":{"dates":["2026-08-13"]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"pinkbee_get_week_schedule","arguments":{"dates":["2026-08-13"]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
 ```
 
 Several weeks at once, gaps only:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"pinkbee_get_week_schedule","arguments":{"dates":["2026-08-13","2026-08-20","2026-08-27"],"only_open_shifts":true}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"pinkbee_get_week_schedule","arguments":{"dates":["2026-08-13","2026-08-20","2026-08-27"],"only_open_shifts":true}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
 ```
 
 ### Shifts that still need people
@@ -54,7 +54,7 @@ curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H
 Note that this tool takes `start_date` and `weeks`, **not** `dates`:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"pinkbee_list_open_shifts","arguments":{"start_date":"2026-08-13","weeks":6,"group_ids":[2]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"pinkbee_list_open_shifts","arguments":{"start_date":"2026-08-13","weeks":6,"group_ids":[2]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
 ```
 
 ### Email addresses of a group
@@ -62,7 +62,7 @@ curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H
 Needs `PINKBEE_ALLOW_PERSONAL_DATA=true`, otherwise the tool refuses.
 
 ```bash
-curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"pinkbee_list_group_emails","arguments":{"group_ids":[2,15]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"pinkbee_list_group_emails","arguments":{"group_ids":[2,15]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
 ```
 
 ### Who signed up, between two dates
@@ -70,13 +70,13 @@ curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H
 By shift id:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"pinkbee_list_registrations","arguments":{"start_date":"2026-07-10","end_date":"2026-09-10","shift_ids":[3,4]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson | {count, shift_ids}'
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"pinkbee_list_registrations","arguments":{"start_date":"2026-07-10","end_date":"2026-09-10","shift_ids":[3,4]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson | {count, shift_ids}'
 ```
 
 Or by group id, which is turned into shift ids for you:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"pinkbee_list_registrations","arguments":{"start_date":"2026-07-10","end_date":"2026-09-10","group_ids":[2]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson | {count, shift_ids}'
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"pinkbee_list_registrations","arguments":{"start_date":"2026-07-10","end_date":"2026-09-10","group_ids":[2]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson | {count, shift_ids}'
 ```
 
 ## Two traps to avoid
