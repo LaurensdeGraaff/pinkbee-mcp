@@ -4,13 +4,13 @@ Pinkbee is a Django website. There is no API key: you log in with a username and
 password, and Pinkbee gives you a session cookie that you send with every later
 request.
 
-Everything here is a GET, except the one login POST. Nothing in this file can
-change data in Pinkbee.
+Reads use GET; the explicitly enabled registration-possibilities write uses PUT.
 """
 
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import html
 import json
 import logging
@@ -23,6 +23,7 @@ import httpx
 log = logging.getLogger("pinkbee_mcp.live")
 
 LOGIN_PATH = "/accounts/login/"
+REGISTRATION_MODES = frozenset({"registration", "deregistration", "both"})
 
 # Pinkbee hides a CSRF token in the login form. We need to send it back.
 CSRF_PATTERN = re.compile(
@@ -36,13 +37,15 @@ class PinkbeeError(Exception):
 
 
 class LivePinkbee:
-    """Reads data from a real Pinkbee instance."""
+    """Reads data from a real Pinkbee instance and optionally changes week settings."""
 
     def __init__(self, base_url: str, login: str, password: str, timeout: int = 20,
-                 client: httpx.AsyncClient | None = None) -> None:
+                 client: httpx.AsyncClient | None = None,
+                 enable_write_to_pinkbee: bool = False) -> None:
         self.base_url = base_url.rstrip("/")
         self.login_name = login
         self.password = password
+        self.enable_write_to_pinkbee = enable_write_to_pinkbee
         self.logged_in = False
         # Counts successful logins. Used to tell "my session went stale" apart
         # from "another request already replaced the session while I waited".
@@ -187,6 +190,36 @@ class LivePinkbee:
     async def week_schedule(self, monday: str) -> list:
         """All shifts and registrations for the week starting on `monday`."""
         return await self.get_json(f"/api/schedule/week/{monday}")
+
+    async def set_week_registration_possibilities(self, date: str, mode: str) -> None:
+        """PUT a week's allowed actions once; never replay a write after session expiry."""
+        if not self.enable_write_to_pinkbee:
+            raise PinkbeeError("live writes are off. Set ENABLE_WRITE_TO_PINKBEE=true to allow them.")
+        try:
+            day = dt.date.fromisoformat(date)
+        except ValueError:
+            raise PinkbeeError("date must be an ISO calendar date") from None
+        if day.isoformat() != date:
+            raise PinkbeeError("date must be an ISO calendar date")
+        if mode not in REGISTRATION_MODES:
+            raise PinkbeeError("invalid registration possibilities mode")
+
+        await self.ensure_logged_in()
+        csrf = self.http.cookies.get("csrftoken")
+        if not csrf:
+            raise PinkbeeError("Pinkbee session has no csrftoken cookie for the write")
+        path = f"/api/schedule/week/{date}/registration-possibilities/{mode}"
+        answer = await self.http.put(
+            path,
+            headers={
+                "x-csrftoken": csrf,
+                "Referer": f"{self.base_url}/",
+                "Origin": self.base_url,
+            },
+            follow_redirects=False,
+        )
+        if answer.status_code != 204:
+            raise PinkbeeError(f"Pinkbee answered HTTP {answer.status_code} for {path}; write not confirmed")
 
     async def groups(self) -> list:
         """All volunteer groups, with their id and name."""

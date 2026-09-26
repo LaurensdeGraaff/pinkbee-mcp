@@ -22,6 +22,7 @@ AVAILABLE_CALLS = frozenset(
         "pinkbee_list_groups_and_shifts",
         "pinkbee_list_open_shifts",
         "pinkbee_list_registrations",
+        "pinkbee_set_week_registration_possibilities",
     }
 )
 
@@ -76,6 +77,9 @@ class Config:
 
     # Tools that return names or email addresses are off until this is on.
     allow_personal_data: bool = False
+
+    # Live writes require an explicit opt-in; mock writes remain local.
+    enable_write_to_pinkbee: bool = False
 
     # Plain HTTP to Pinkbee would put the password on the wire in clear text, so it
     # is refused unless this is on AND the host is this machine.
@@ -161,6 +165,7 @@ def load_config() -> Config:
         login=login,
         password=password,
         allow_personal_data=read_flag("PINKBEE_ALLOW_PERSONAL_DATA", False),
+        enable_write_to_pinkbee=read_flag("ENABLE_WRITE_TO_PINKBEE", False),
         allow_insecure_http_to_localhost=allow_insecure,
         timezone=timezone,
         token=read_text("PINKBEE_MCP_TOKEN"),

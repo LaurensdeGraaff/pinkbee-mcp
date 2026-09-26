@@ -1,4 +1,4 @@
-"""Tests for the six MCP tools, running against the mock data source."""
+"""Tests for the MCP tools, running against the mock data source."""
 
 import datetime as dt
 import json
@@ -320,12 +320,14 @@ async def test_registrations_add_the_shift_id_back_to_each_row():
 # --- the tool list itself -------------------------------------------------
 
 
-async def test_exactly_six_read_only_tools_are_registered():
+async def test_seven_tools_have_appropriate_annotations():
     tools = await server.mcp.list_tools()
     assert {tool.name for tool in tools} == AVAILABLE_CALLS
     for tool in tools:
-        assert tool.annotations.read_only_hint is True
-        assert tool.annotations.destructive_hint is False
+        is_write = tool.name == "pinkbee_set_week_registration_possibilities"
+        assert tool.annotations.read_only_hint is not is_write
+        assert tool.annotations.destructive_hint is is_write
+        assert tool.annotations.idempotent_hint is True
 
 
 async def test_every_tool_argument_has_a_description():
@@ -342,6 +344,73 @@ async def test_required_arguments_are_marked_as_such():
         "end_date",
         "start_date",
     ]
+    assert sorted(tools["pinkbee_set_week_registration_possibilities"].input_schema["required"]) == [
+        "date", "mode",
+    ]
+
+
+async def test_mock_write_normalizes_dates_and_updates_only_the_selected_week():
+    mock = MockPinkbee()
+    server.setup(Config(enable_write_to_pinkbee=True), mock)
+    assert json.loads(await server.pinkbee_set_week_registration_possibilities(
+        date="13-08-2026", mode="registration"
+    )) == {"week_start": "2026-08-10", "mode": "registration"}
+    await server.pinkbee_set_week_registration_possibilities(date="2026-08-20", mode="both")
+    await server.pinkbee_set_week_registration_possibilities(
+        date="2026-08-16", mode="deregistration"
+    )
+    assert mock.registration_possibilities == {
+        "2026-08-10": "deregistration", "2026-08-17": "both",
+    }
+
+
+@pytest.mark.parametrize("mode", ["../both", "Both", "registration/", "", "both?x=1"])
+async def test_write_rejects_unexpected_modes_before_accessing_the_source(mode):
+    server.setup(Config(enable_write_to_pinkbee=True), MockPinkbee())
+    with pytest.raises(ToolError, match="mode must be exactly"):
+        await server.pinkbee_set_week_registration_possibilities(date="2026-08-13", mode=mode)
+
+
+async def test_write_rejects_invalid_date_before_accessing_the_source():
+    server.setup(Config(enable_write_to_pinkbee=True), MockPinkbee())
+    with pytest.raises(ToolError, match="date must be"):
+        await server.pinkbee_set_week_registration_possibilities(
+            date="2026-08-13/../other", mode="both"
+        )
+
+
+async def test_live_tool_gate_prevents_any_source_io():
+    class NoIO:
+        def describe(self):
+            return "no I/O"
+
+        async def set_week_registration_possibilities(self, monday, mode):
+            pytest.fail("write source was called")
+
+    server.setup(Config(data_source="live"), NoIO())
+    with pytest.raises(ToolError, match="ENABLE_WRITE_TO_PINKBEE"):
+        await server.pinkbee_set_week_registration_possibilities(date="2026-08-13", mode="both")
+
+
+async def test_mock_tool_also_requires_opt_in():
+    with pytest.raises(ToolError, match="ENABLE_WRITE_TO_PINKBEE"):
+        await server.pinkbee_set_week_registration_possibilities(date="2026-08-13", mode="both")
+
+
+async def test_live_tool_calls_source_when_enabled():
+    class Recorder(MockPinkbee):
+        async def set_week_registration_possibilities(self, date, mode):
+            self.sent_date = date
+            await super().set_week_registration_possibilities(date, mode)
+
+    mock = Recorder()
+    server.setup(Config(data_source="live", enable_write_to_pinkbee=True), mock)
+    result = json.loads(await server.pinkbee_set_week_registration_possibilities(
+        date="2026-08-13", mode="both"
+    ))
+    assert result == {"week_start": "2026-08-10", "mode": "both"}
+    assert mock.sent_date == "2026-08-13"
+    assert mock.registration_possibilities == {"2026-08-10": "both"}
 
 
 # --- the filter must never widen by accident ------------------------------

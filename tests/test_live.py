@@ -20,12 +20,102 @@ LOGIN_PAGE = (
 DASHBOARD = "<h1>Welcome</h1>"
 
 
-def build(handler):
+def build(handler, *, enable_write_to_pinkbee=False):
     """A LivePinkbee whose HTTP calls go to `handler` instead of the network."""
     fake_http = httpx.AsyncClient(
         base_url=BASE, transport=httpx.MockTransport(handler), follow_redirects=True
     )
-    return LivePinkbee(BASE, "someone@example.org", "secret", client=fake_http)
+    return LivePinkbee(BASE, "someone@example.org", "secret", client=fake_http,
+                       enable_write_to_pinkbee=enable_write_to_pinkbee)
+
+
+async def test_write_is_blocked_by_default_before_login():
+    def handler(request):
+        pytest.fail("HTTP was called")
+
+    with pytest.raises(PinkbeeError, match="ENABLE_WRITE_TO_PINKBEE"):
+        await build(handler).set_week_registration_possibilities("2026-08-10", "both")
+
+
+@pytest.mark.parametrize("monday,mode", [
+    ("2026-08-10/../../", "both"), ("2026-02-30", "both"),
+    ("2026-08-10", "../registration"),
+])
+async def test_write_rejects_unsafe_direct_arguments_before_login(monday, mode):
+    def handler(request):
+        pytest.fail("HTTP was called")
+
+    with pytest.raises(PinkbeeError):
+        await build(handler, enable_write_to_pinkbee=True).set_week_registration_possibilities(
+            monday, mode
+        )
+
+
+@pytest.mark.parametrize("mode", ["registration", "deregistration", "both"])
+async def test_write_uses_session_csrf_and_exact_put_path(mode):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if request.url.path == "/accounts/login/":
+            if request.method == "GET":
+                return httpx.Response(
+                    200, text=LOGIN_PAGE, headers={"set-cookie": "csrftoken=cookie123; Path=/"}
+                )
+            return httpx.Response(200, text=DASHBOARD, headers={"set-cookie": "sessionid=session123; Path=/"})
+        assert request.headers["cookie"].count("csrftoken=cookie123") == 1
+        assert "sessionid=session123" in request.headers["cookie"]
+        assert request.headers["x-csrftoken"] == "cookie123"
+        assert request.headers["origin"] == BASE
+        assert request.headers["referer"].startswith(BASE + "/")
+        assert request.content == b""
+        return httpx.Response(204)
+
+    client = build(handler, enable_write_to_pinkbee=True)
+    await client.set_week_registration_possibilities("2026-08-13", mode)
+    assert [(request.method, request.url.path) for request in calls] == [
+        ("GET", "/accounts/login/"), ("POST", "/accounts/login/"),
+        ("PUT", f"/api/schedule/week/2026-08-13/registration-possibilities/{mode}"),
+    ]
+
+
+async def test_write_requires_csrf_cookie_before_put():
+    calls = []
+
+    def handler(request):
+        calls.append(request.method)
+        return httpx.Response(200, text=LOGIN_PAGE if request.method == "GET" else DASHBOARD)
+
+    with pytest.raises(PinkbeeError, match="csrftoken"):
+        await build(handler, enable_write_to_pinkbee=True).set_week_registration_possibilities(
+            "2026-08-10", "both"
+        )
+    assert calls == ["GET", "POST"]
+
+
+@pytest.mark.parametrize("status,body,headers", [
+    (403, LOGIN_PAGE, {}), (500, "error", {}),
+    (200, LOGIN_PAGE, {}), (302, "", {"location": "/accounts/login/"}),
+])
+async def test_write_fails_without_retry_or_following_redirect(status, body, headers):
+    puts = []
+    logins = []
+
+    def handler(request):
+        if request.url.path == "/accounts/login/":
+            logins.append(request.method)
+            return httpx.Response(
+                200, text=LOGIN_PAGE if request.method == "GET" else DASHBOARD,
+                headers={"set-cookie": "csrftoken=abc; Path=/"},
+            )
+        puts.append(request)
+        return httpx.Response(status, text=body, headers=headers)
+
+    client = build(handler, enable_write_to_pinkbee=True)
+    with pytest.raises(PinkbeeError, match=f"HTTP {status}"):
+        await client.set_week_registration_possibilities("2026-08-10", "both")
+    assert len(puts) == 1
+    assert logins == ["GET", "POST"]
 
 
 def login_then(json_answer, status=200, content_type="application/json"):
