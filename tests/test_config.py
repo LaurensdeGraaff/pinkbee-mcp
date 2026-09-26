@@ -10,6 +10,7 @@ ALL_VARIABLES = [
     "PINKBEE_LOGIN",
     "PINKBEE_PASSWORD",
     "PINKBEE_ALLOW_PERSONAL_DATA",
+    "ENABLE_WRITE_TO_PINKBEE",
     "PINKBEE_TIMEZONE",
     "PINKBEE_MCP_TOKEN",
     "PINKBEE_ALLOWED_SENDERS",
@@ -41,6 +42,15 @@ def test_an_empty_environment_gives_mock_data():
 
 def test_personal_data_is_off_by_default():
     assert load_config().allow_personal_data is False
+
+
+def test_live_writes_require_explicit_opt_in(monkeypatch):
+    set_live_credentials(monkeypatch)
+    assert load_config().enable_write_to_pinkbee is False
+    monkeypatch.setenv("ENABLE_WRITE_TO_PINKBEE", "true")
+    assert load_config().enable_write_to_pinkbee is True
+    monkeypatch.setenv("ENABLE_WRITE_TO_PINKBEE", "false")
+    assert load_config().enable_write_to_pinkbee is False
 
 
 def test_mock_mode_needs_no_credentials():
@@ -121,6 +131,11 @@ def test_disabled_calls_are_read_as_a_list(monkeypatch):
         "pinkbee_list_group_emails",
         "pinkbee_list_registrations",
     )
+
+
+def test_write_call_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("PINKBEE_DISABLED_CALLS", "pinkbee_set_week_registration_possibilities")
+    assert load_config().disabled_calls == ("pinkbee_set_week_registration_possibilities",)
 
 
 def test_duplicate_disabled_calls_are_deduplicated(monkeypatch):

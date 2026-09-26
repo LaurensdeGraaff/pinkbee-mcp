@@ -1,4 +1,4 @@
-"""The MCP server: six read-only tools for a Pinkbee volunteer roster.
+"""The MCP server: roster reads and an opt-in registration-possibilities write.
 
 Each tool is a plain async function. It gets the data from the current data source
 (mock or live), reshapes it, and returns JSON text.
@@ -37,10 +37,9 @@ mcp = MCPServer(
     name="pinkbee_mcp",
     title="Pinkbee volunteer roster",
     instructions=(
-        "Read-only access to a Pinkbee volunteer roster (shift planning for "
-        "volunteers). Start with pinkbee_list_groups_and_shifts to learn the "
-        "group and shift ids, then use the other tools. No tool can book, "
-        "cancel or change anything in Pinkbee."
+        "Access to a Pinkbee volunteer roster (shift planning for volunteers). "
+        "Start with pinkbee_list_groups_and_shifts to learn the group and shift ids. "
+        "Changing a week's registration possibilities requires an explicit write opt-in."
     ),
     version="0.2.0",
     # Two pieces of cross-cutting behaviour, both in logs.py.
@@ -50,6 +49,13 @@ mcp = MCPServer(
 READ_ONLY = {
     "read_only_hint": True,
     "destructive_hint": False,
+    "idempotent_hint": True,
+    "open_world_hint": True,
+}
+
+WRITE = {
+    "read_only_hint": False,
+    "destructive_hint": True,
     "idempotent_hint": True,
     "open_world_hint": True,
 }
@@ -82,7 +88,8 @@ def setup(new_config: Config | None = None, new_source=None) -> None:
         source = new_source
     elif config.is_live:
         source = LivePinkbee(
-            config.base_url, config.login, config.password, timeout=config.timeout_seconds
+            config.base_url, config.login, config.password, timeout=config.timeout_seconds,
+            enable_write_to_pinkbee=config.enable_write_to_pinkbee,
         )
     else:
         source = MockPinkbee()
@@ -659,6 +666,40 @@ async def pinkbee_list_registrations(
                 "registrations": registrations,
             }
         )
+    except Exception as problem:
+        raise as_tool_error(problem) from problem
+
+
+# ---------------------------------------------------------------------------
+# 7. Set registration possibilities for a week
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="pinkbee_set_week_registration_possibilities",
+    annotations=ToolAnnotations(title="Set a week's registration possibilities", **WRITE),
+)
+async def pinkbee_set_week_registration_possibilities(
+    date: Annotated[str, Field(description="Any date in the week, YYYY-MM-DD or DD-MM-YYYY.")],
+    mode: Annotated[
+        str,
+        Field(description="Exactly one of: registration, deregistration, both."),
+    ],
+) -> str:
+    """Set which registration actions are possible for the entire Monday-to-Sunday week.
+
+    Requires ENABLE_WRITE_TO_PINKBEE=true. In mock mode the change is stored
+    locally. This does not register or deregister volunteers.
+    """
+    try:
+        # Gate before parsing or asking the data source for anything.
+        if not config.enable_write_to_pinkbee:
+            raise ToolError("writes are off. Set ENABLE_WRITE_TO_PINKBEE=true to allow them.")
+        if mode not in {"registration", "deregistration", "both"}:
+            raise ToolError("mode must be exactly 'registration', 'deregistration' or 'both'.")
+        parsed_date = parse_date(date)
+        await source.set_week_registration_possibilities(parsed_date.isoformat(), mode)
+        return as_json({"week_start": roster.monday_of(parsed_date).isoformat(), "mode": mode})
     except Exception as problem:
         raise as_tool_error(problem) from problem
 

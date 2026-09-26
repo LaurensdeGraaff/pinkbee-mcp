@@ -104,6 +104,15 @@ def full_name(person: dict) -> str:
 class MockPinkbee:
     """Answers the same questions as LivePinkbee, from the tables above."""
 
+    def __init__(self) -> None:
+        self.registration_possibilities: dict[str, str] = {}
+
+    async def set_week_registration_possibilities(self, date: str, mode: str) -> None:
+        """Remember a week's selected mode without changing other weeks."""
+        day = dt.date.fromisoformat(date)
+        monday = day - dt.timedelta(days=day.weekday())
+        self.registration_possibilities[monday.isoformat()] = mode
+
     def describe(self) -> str:
         return "built-in mock data (no connection to any Pinkbee instance)"
 

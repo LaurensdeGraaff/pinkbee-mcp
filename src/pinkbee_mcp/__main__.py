@@ -155,7 +155,10 @@ def main() -> int:
     strict_arguments.allowed_arguments = asyncio.run(allowed_arguments())
 
     if config.data_source == "live":
-        log.warning("Reading from a live Pinkbee instance. All requests are read-only.")
+        log.warning(
+            "Using a live Pinkbee instance. Writes: %s.",
+            "enabled" if config.enable_write_to_pinkbee else "disabled",
+        )
 
     app = mcp.streamable_http_app(
         streamable_http_path=HTTP_PATH,
