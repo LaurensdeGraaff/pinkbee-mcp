@@ -91,6 +91,23 @@ curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H
 The modes are `registration` (only sign up), `deregistration` (only cancel) and
 `both`. For example, to allow both again, repeat the call with `mode: "both"`.
 
+### Change capacity, time or note for one shift date
+
+These calls require `ENABLE_WRITE_TO_PINKBEE=true`. Find the shift id with
+`pinkbee_list_groups_and_shifts`; each call changes one uniquely selected timeblock.
+
+```bash
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"pinkbee_set_shift_capacity","arguments":{"date":"2026-12-01","shift_id":3,"capacity":2}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
+```
+
+```bash
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"pinkbee_set_shift_time","arguments":{"date":"2026-12-01","shift_id":3,"start_time":"10:00","end_time":"11:00"}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
+```
+
+```bash
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"pinkbee_set_shift_note","arguments":{"date":"2026-12-01","shift_id":3,"note":"Please arrive a little early."}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
+```
+
 ## Two traps to avoid
 
 ### Week dates and Mondays

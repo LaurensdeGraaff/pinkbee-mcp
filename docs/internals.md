@@ -8,9 +8,9 @@ Small files, each with one job:
 | --- | --- |
 | [config.py](../src/pinkbee_mcp/config.py) | Read the environment into one `Config` |
 | [mock.py](../src/pinkbee_mcp/mock.py) | The built-in sample data source |
-| [live.py](../src/pinkbee_mcp/live.py) | The real Pinkbee data source: login, reads and opt-in weekly PUT |
+| [live.py](../src/pinkbee_mcp/live.py) | The real Pinkbee data source: login, reads and opt-in PUT writes |
 | [roster.py](../src/pinkbee_mcp/roster.py) | Flatten a week and work out open spots. No network, no I/O |
-| [server.py](../src/pinkbee_mcp/server.py) | The seven tools |
+| [server.py](../src/pinkbee_mcp/server.py) | The ten tools |
 | [logs.py](../src/pinkbee_mcp/logs.py) | Logging, and the two middlewares |
 | [\_\_main\_\_.py](../src/pinkbee_mcp/__main__.py) | Start it, pick the transport, check tokens and origins |
 
@@ -18,12 +18,12 @@ Plus [healthcheck.py](../src/pinkbee_mcp/healthcheck.py) for the container probe
 
 `mock.py` and `live.py` offer the same methods — `week_schedule`, `groups`,
 `shifts`, `shift_group_links`, `contacts`, `registrations` and
-`set_week_registration_possibilities` — so `server.py` cannot
+`set_week_registration_possibilities` and `update_timeblock` — so `server.py` cannot
 tell which one it is talking to. That is the whole trick behind mock mode, and it is
 why the tests never need a real Pinkbee instance.
-The weekly write requires `ENABLE_WRITE_TO_PINKBEE=true` in the tool, and the live
-client checks the flag again before doing any network I/O. Mock changes exist only
-in memory for the duration of that mock instance.
+All writes require `ENABLE_WRITE_TO_PINKBEE=true` in the tool, and the live client
+checks the flag again before doing any network I/O. Mock changes exist only in
+memory for the duration of that mock instance.
 
 `roster.py` is deliberately pure: give it a week payload, get rows back. All the
 capacity rules live there, which is why they are easy to test and hard to get wrong
@@ -133,7 +133,7 @@ Pinkbee instance.
 | [test_roster.py](../tests/test_roster.py) | Capacity maths, flattening, the absent-registration rules |
 | [test_mock.py](../tests/test_mock.py) | The sample data: determinism, self-consistency, safe addresses |
 | [test_live.py](../tests/test_live.py) | Login, session reuse and renewal, read URLs and guarded PUTs |
-| [test_tools.py](../tests/test_tools.py) | The seven tools, including the personal-data and write refusals |
+| [test_tools.py](../tests/test_tools.py) | The tools, including the personal-data and write refusals |
 | [test_config.py](../tests/test_config.py) | Environment parsing and every refusal to start |
 | [test_logs.py](../tests/test_logs.py) | Log summaries, strict arguments, and no personal data in our lines |
 | [test_transport.py](../tests/test_transport.py) | Sender-IP allowlisting and the bearer challenge |

@@ -4,7 +4,7 @@ Pinkbee is a Django website. There is no API key: you log in with a username and
 password, and Pinkbee gives you a session cookie that you send with every later
 request.
 
-Reads use GET; the explicitly enabled registration-possibilities write uses PUT.
+Reads use GET; explicitly enabled roster writes use PUT.
 """
 
 from __future__ import annotations
@@ -211,6 +211,54 @@ class LivePinkbee:
         path = f"/api/schedule/week/{date}/registration-possibilities/{mode}"
         answer = await self.http.put(
             path,
+            headers={
+                "x-csrftoken": csrf,
+                "Referer": f"{self.base_url}/",
+                "Origin": self.base_url,
+            },
+            follow_redirects=False,
+        )
+        if answer.status_code != 204:
+            raise PinkbeeError(f"Pinkbee answered HTTP {answer.status_code} for {path}; write not confirmed")
+
+    async def update_timeblock(self, timeblock_id: int, changes: dict) -> None:
+        """Update selected fields on one schedule timeblock."""
+        if not self.enable_write_to_pinkbee:
+            raise PinkbeeError("live writes are off. Set ENABLE_WRITE_TO_PINKBEE=true to allow them.")
+        if isinstance(timeblock_id, bool) or not isinstance(timeblock_id, int) or timeblock_id <= 0:
+            raise PinkbeeError("timeblock id must be a positive integer")
+        if not changes or set(changes) - {"capacity", "start_time", "end_time", "comment"}:
+            raise PinkbeeError("invalid timeblock changes")
+        if "capacity" in changes and (
+            isinstance(changes["capacity"], bool)
+            or not isinstance(changes["capacity"], int)
+            or changes["capacity"] < 0
+        ):
+            raise PinkbeeError("capacity must be a non-negative integer")
+        if "comment" in changes and (
+            not isinstance(changes["comment"], str) or len(changes["comment"]) > 2000
+        ):
+            raise PinkbeeError("comment must be text of at most 2000 characters")
+        for field in ("start_time", "end_time"):
+            if field in changes:
+                try:
+                    parsed = dt.time.fromisoformat(changes[field])
+                except (TypeError, ValueError):
+                    raise PinkbeeError(f"{field} must use HH:MM") from None
+                if parsed.second or parsed.microsecond:
+                    raise PinkbeeError(f"{field} must use HH:MM")
+        if "start_time" in changes and "end_time" in changes:
+            if dt.time.fromisoformat(changes["end_time"]) <= dt.time.fromisoformat(changes["start_time"]):
+                raise PinkbeeError("end_time must be after start_time")
+
+        await self.ensure_logged_in()
+        csrf = self.http.cookies.get("csrftoken")
+        if not csrf:
+            raise PinkbeeError("Pinkbee session has no csrftoken cookie for the write")
+        path = f"/api/schedule/timeblock/{timeblock_id}"
+        answer = await self.http.put(
+            path,
+            json=changes,
             headers={
                 "x-csrftoken": csrf,
                 "Referer": f"{self.base_url}/",

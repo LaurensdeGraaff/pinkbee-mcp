@@ -704,6 +704,76 @@ async def pinkbee_set_week_registration_possibilities(
         raise as_tool_error(problem) from problem
 
 
+async def update_selected_timeblock(date: str, shift_id: int, changes: dict) -> dict:
+    """Locate one roster block and apply a guarded field update."""
+    if not config.enable_write_to_pinkbee:
+        raise ToolError("writes are off. Set ENABLE_WRITE_TO_PINKBEE=true to allow them.")
+    day = parse_date(date)
+    if isinstance(shift_id, bool) or shift_id <= 0:
+        raise ToolError("shift_id must be a positive integer")
+    week = await source.week_schedule(roster.monday_of(day).isoformat())
+    matches = [
+        (shift, block)
+        for shift in week if isinstance(shift, dict) and shift.get("id") == shift_id
+        for block in shift.get("timeblocks", [])
+        if isinstance(block, dict) and block.get("date") == day.isoformat()
+    ]
+    if len(matches) != 1:
+        raise ToolError("date and shift_id must identify exactly one timeblock")
+    shift, block = matches[0]
+    if not block.get("id"):
+        raise ToolError("the selected timeblock has no id")
+    await source.update_timeblock(block["id"], changes)
+    return {"date": day.isoformat(), "shift_id": shift_id, "timeblock_id": block["id"], **changes}
+
+
+@mcp.tool(name="pinkbee_set_shift_capacity", annotations=ToolAnnotations(title="Set shift capacity", **WRITE))
+async def pinkbee_set_shift_capacity(
+    date: Annotated[str, Field(description="Dienstdatum, YYYY-MM-DD or DD-MM-YYYY.")],
+    shift_id: Annotated[int, Field(description="Shift id from pinkbee_list_groups_and_shifts.")],
+    capacity: Annotated[int, Field(ge=0, description="Maximum number of volunteers who can sign up.")],
+) -> str:
+    """Set the signup capacity for one shift on one date. Requires ENABLE_WRITE_TO_PINKBEE=true."""
+    try:
+        return as_json(await update_selected_timeblock(date, shift_id, {"capacity": capacity}))
+    except Exception as problem:
+        raise as_tool_error(problem) from problem
+
+
+@mcp.tool(name="pinkbee_set_shift_time", annotations=ToolAnnotations(title="Set shift time", **WRITE))
+async def pinkbee_set_shift_time(
+    date: Annotated[str, Field(description="Dienstdatum, YYYY-MM-DD or DD-MM-YYYY.")],
+    shift_id: Annotated[int, Field(description="Shift id from pinkbee_list_groups_and_shifts.")],
+    start_time: Annotated[str, Field(description="Starttijd in HH:MM.")],
+    end_time: Annotated[str, Field(description="Eindtijd in HH:MM, after start_time.")],
+) -> str:
+    """Set start and end time for one shift on one date. Requires ENABLE_WRITE_TO_PINKBEE=true."""
+    try:
+        start = dt.time.fromisoformat(start_time)
+        end = dt.time.fromisoformat(end_time)
+        if start.second or start.microsecond or end.second or end.microsecond:
+            raise ValueError("times must use HH:MM")
+        if end <= start:
+            raise ValueError("end_time must be after start_time")
+        changes = {"start_time": start.strftime("%H:%M"), "end_time": end.strftime("%H:%M")}
+        return as_json(await update_selected_timeblock(date, shift_id, changes))
+    except Exception as problem:
+        raise as_tool_error(problem) from problem
+
+
+@mcp.tool(name="pinkbee_set_shift_note", annotations=ToolAnnotations(title="Set shift note", **WRITE))
+async def pinkbee_set_shift_note(
+    date: Annotated[str, Field(description="Dienstdatum, YYYY-MM-DD or DD-MM-YYYY.")],
+    shift_id: Annotated[int, Field(description="Shift id from pinkbee_list_groups_and_shifts.")],
+    note: Annotated[str, Field(max_length=2000, description="Note visible to volunteers for this shift.")],
+) -> str:
+    """Set the volunteer-visible note for one shift on one date. Requires ENABLE_WRITE_TO_PINKBEE=true."""
+    try:
+        return as_json(await update_selected_timeblock(date, shift_id, {"comment": note}))
+    except Exception as problem:
+        raise as_tool_error(problem) from problem
+
+
 # ---------------------------------------------------------------------------
 # Small helpers that need the data source
 # ---------------------------------------------------------------------------

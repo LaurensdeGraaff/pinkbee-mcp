@@ -112,6 +112,23 @@ other than 204 as unconfirmed and does not replay a write after a session failur
 The capture did not include a GET of the current mode, so this project does not
 claim to read back or automatically restore the previous value.
 
+## `PUT /api/schedule/timeblock/<id>`
+
+The browser uses this endpoint to update an individual date's timeblock. The MCP
+exposes three narrow tools, each sending only its requested fields:
+
+| Tool | JSON body |
+| --- | --- |
+| `pinkbee_set_shift_capacity` | `{"capacity": 2}` |
+| `pinkbee_set_shift_time` | `{"start_time": "10:00", "end_time": "11:00"}` |
+| `pinkbee_set_shift_note` | `{"comment": "..."}` |
+
+The request uses the login session's CSRF cookie and requires
+`ENABLE_WRITE_TO_PINKBEE=true`; only HTTP 204 confirms success. Tools take a
+calendar `date` and `shift_id`, read that week's schedule and require exactly one
+matching timeblock. Any calendar date is accepted. The live account must have admin permission. The note is the `comment` field read
+on each timeblock.
+
 ## `GET /api/group/`
 
 Every volunteer group, with its members.
