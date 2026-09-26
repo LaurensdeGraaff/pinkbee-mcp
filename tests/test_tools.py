@@ -1,7 +1,7 @@
 """Tests for the MCP tools, running against the mock data source."""
 
-import datetime as dt
 import json
+import datetime as dt
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
@@ -411,6 +411,42 @@ async def test_live_tool_calls_source_when_enabled():
     assert result == {"week_start": "2026-08-10", "mode": "both"}
     assert mock.sent_date == "2026-08-13"
     assert mock.registration_possibilities == {"2026-08-10": "both"}
+
+
+async def test_timeblock_tools_require_opt_in_before_reading_source():
+    class NoIO:
+        async def week_schedule(self, monday):
+            pytest.fail("schedule was read before the write gate")
+
+    server.setup(Config(data_source="live"), NoIO())
+    with pytest.raises(ToolError, match="ENABLE_WRITE_TO_PINKBEE"):
+        await server.pinkbee_set_shift_capacity(
+            date="2099-01-01", shift_id=3, capacity=2
+        )
+
+
+async def test_capacity_write_selects_one_dated_timeblock():
+    class Recorder(MockPinkbee):
+        async def update_timeblock(self, timeblock_id, changes):
+            self.updated = (timeblock_id, changes)
+
+    mock = Recorder()
+    server.setup(Config(enable_write_to_pinkbee=True), mock)
+    target = server.today()
+    result = json.loads(await server.pinkbee_set_shift_capacity(
+        date=target.isoformat(), shift_id=3, capacity=4
+    ))
+    assert result["date"] == target.isoformat()
+    assert result["shift_id"] == 3
+    assert mock.updated[1] == {"capacity": 4}
+
+
+async def test_time_tool_rejects_end_before_start():
+    server.setup(Config(enable_write_to_pinkbee=True), MockPinkbee())
+    with pytest.raises(ToolError, match="end_time must be after start_time"):
+        await server.pinkbee_set_shift_time(
+            date="2099-01-01", shift_id=3, start_time="12:00", end_time="11:00"
+        )
 
 
 # --- the filter must never widen by accident ------------------------------

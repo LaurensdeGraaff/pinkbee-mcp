@@ -93,6 +93,36 @@ async def test_write_requires_csrf_cookie_before_put():
     assert calls == ["GET", "POST"]
 
 
+async def test_timeblock_write_sends_exact_json_and_csrf():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if request.url.path == "/accounts/login/":
+            if request.method == "GET":
+                return httpx.Response(200, text=LOGIN_PAGE, headers={"set-cookie": "csrftoken=cookie123; Path=/"})
+            return httpx.Response(200, text=DASHBOARD)
+        assert request.method == "PUT"
+        assert request.url.path == "/api/schedule/timeblock/123"
+        assert request.headers["x-csrftoken"] == "cookie123"
+        assert request.content == b'{"capacity":2}'
+        return httpx.Response(204)
+
+    await build(handler, enable_write_to_pinkbee=True).update_timeblock(123, {"capacity": 2})
+    assert [(call.method, call.url.path) for call in calls][-1] == (
+        "PUT", "/api/schedule/timeblock/123"
+    )
+
+
+async def test_timeblock_write_rejects_invalid_id_before_login():
+    def handler(request):
+        pytest.fail("HTTP was called")
+
+    client = build(handler, enable_write_to_pinkbee=True)
+    with pytest.raises(PinkbeeError, match="positive integer"):
+        await client.update_timeblock(0, {"capacity": 1})
+
+
 @pytest.mark.parametrize("status,body,headers", [
     (403, LOGIN_PAGE, {}), (500, "error", {}),
     (200, LOGIN_PAGE, {}), (302, "", {"location": "/accounts/login/"}),

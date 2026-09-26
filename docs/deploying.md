@@ -27,8 +27,9 @@ login sends the password. A local test Pinkbee can use HTTP only with
 `PINKBEE_ALLOW_INSECURE_HTTP_TO_LOCALHOST=true`.
 
 Mock and live modes expose the same MCP calls. Live mode performs only GET requests
-after the login POST unless `ENABLE_WRITE_TO_PINKBEE=true` and the weekly setting tool
-is called. That tool needs a Pinkbee account with administrator permissions.
+after the login POST unless `ENABLE_WRITE_TO_PINKBEE=true` and a write tool is called.
+All write tools need a Pinkbee account with administrator permissions. The shift
+capacity, time and note tools update one uniquely matched date/shift timeblock.
 
 ## Configuration
 
@@ -43,7 +44,7 @@ These are all supported deployment variables. Their defaults are also visible in
 | `PINKBEE_PASSWORD` | empty | Pinkbee password, required in live mode |
 | `PINKBEE_ALLOW_INSECURE_HTTP_TO_LOCALHOST` | `false` | Permit HTTP only to a local test Pinkbee |
 | `PINKBEE_ALLOW_PERSONAL_DATA` | `false` | Enable calls that return names or email addresses |
-| `ENABLE_WRITE_TO_PINKBEE` | `false` | Permit the weekly registration-possibilities tool (live writes require admin rights) |
+| `ENABLE_WRITE_TO_PINKBEE` | `false` | Permit write tools (live writes require admin rights) |
 | `PINKBEE_MCP_TOKEN` | empty | Shared bearer token required from MCP clients |
 | `PINKBEE_ALLOWED_SENDERS` | empty | Comma-separated sender IPs or DNS names; empty allows all |
 | `PINKBEE_DISABLED_CALLS` | empty | Comma-separated call blacklist; empty enables all |
@@ -134,14 +135,17 @@ Available names:
 | `pinkbee_list_group_emails` | yes |
 | `pinkbee_list_registrations` | yes |
 | `pinkbee_set_week_registration_possibilities` | no; writes when enabled |
+| `pinkbee_set_shift_capacity` | no; writes when enabled |
+| `pinkbee_set_shift_time` | no; writes when enabled |
+| `pinkbee_set_shift_note` | no; writes when enabled |
 
 `PINKBEE_ALLOW_PERSONAL_DATA=false` is an additional safety gate. The two personal
 data calls remain visible but refuse to return data. Use the blacklist when they
 should not be exposed at all.
 
-`ENABLE_WRITE_TO_PINKBEE=false` similarly leaves the weekly setting tool visible,
-but calls fail before accessing the data source. To hide it too, add
-`pinkbee_set_week_registration_possibilities` to `PINKBEE_DISABLED_CALLS`.
+`ENABLE_WRITE_TO_PINKBEE=false` leaves write tools visible, but calls fail before
+accessing the data source. To hide them too, add their names to
+`PINKBEE_DISABLED_CALLS`.
 
 ## Operations
 

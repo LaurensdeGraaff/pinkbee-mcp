@@ -106,12 +106,17 @@ class MockPinkbee:
 
     def __init__(self) -> None:
         self.registration_possibilities: dict[str, str] = {}
+        self.timeblock_changes: dict[int, dict] = {}
 
     async def set_week_registration_possibilities(self, date: str, mode: str) -> None:
         """Remember a week's selected mode without changing other weeks."""
         day = dt.date.fromisoformat(date)
         monday = day - dt.timedelta(days=day.weekday())
         self.registration_possibilities[monday.isoformat()] = mode
+
+    async def update_timeblock(self, timeblock_id: int, changes: dict) -> None:
+        """Remember changed fields for one generated timeblock."""
+        self.timeblock_changes.setdefault(timeblock_id, {}).update(changes)
 
     def describe(self) -> str:
         return "built-in mock data (no connection to any Pinkbee instance)"
@@ -130,15 +135,19 @@ class MockPinkbee:
             timeblocks = []
             for day_number in range(7):
                 day = first_day + dt.timedelta(days=day_number)
-                capacity = shift["capacity"] if day.weekday() in shift["weekdays"] else 0
+                block_id = stable_number("timeblock", shift["id"], day) % 100000
+                changes = self.timeblock_changes.get(block_id, {})
+                capacity = changes.get(
+                    "capacity", shift["capacity"] if day.weekday() in shift["weekdays"] else 0
+                )
                 timeblocks.append(
                     {
-                        "id": stable_number("timeblock", shift["id"], day) % 100000,
+                        "id": block_id,
                         "date": day.isoformat(),
-                        "start_time": shift["start_time"],
-                        "end_time": shift["end_time"],
+                        "start_time": changes.get("start_time", shift["start_time"]),
+                        "end_time": changes.get("end_time", shift["end_time"]),
                         "capacity": capacity,
-                        "comment": "",
+                        "comment": changes.get("comment", ""),
                         "registrations": mock_registrations(shift, day, capacity),
                     }
                 )

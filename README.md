@@ -51,6 +51,9 @@ curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H
 | `pinkbee_list_group_emails` | `group_ids`, optional `employment`, `with_names` | Email addresses of volunteers in a group *(personal data)* |
 | `pinkbee_list_registrations` | `start_date`, `end_date`, optional `shift_ids`, `group_ids`, `all_shifts` | Who signed up for which shift *(personal data)* |
 | `pinkbee_set_week_registration_possibilities` | `date`, `mode` | Allow only sign-up (`registration`), only cancellation (`deregistration`), or both (`both`) for the week containing `date` *(requires `ENABLE_WRITE_TO_PINKBEE=true`)* |
+| `pinkbee_set_shift_capacity` | `date`, `shift_id`, `capacity` | Set signup capacity for one shift on one date *(requires `ENABLE_WRITE_TO_PINKBEE=true`)* |
+| `pinkbee_set_shift_time` | `date`, `shift_id`, `start_time`, `end_time` | Set the time for one shift on one date *(requires `ENABLE_WRITE_TO_PINKBEE=true`)* |
+| `pinkbee_set_shift_note` | `date`, `shift_id`, `note` | Set the volunteer-visible note for one shift on one date *(requires `ENABLE_WRITE_TO_PINKBEE=true`)* |
 
 Group and shift names are chosen by each Pinkbee administrator, so nothing here
 assumes any particular naming: `pinkbee_list_groups_and_shifts` returns the whole
@@ -113,8 +116,8 @@ driving the LAN service through DNS rebinding. Normal MCP clients do not send it
 ## Safety
 
 - **Writes off by default.** Live writes require `ENABLE_WRITE_TO_PINKBEE=true`;
-  the weekly setting tool also refuses in mock mode until enabled. It sends one PUT
-  per call, never a registration or cancellation on behalf of a volunteer.
+  write tools also refuse in mock mode until enabled. Roster changes target one
+  uniquely selected timeblock per call.
 - **Mock data by default.** Reaching a live instance needs a deliberate
   `PINKBEE_DATA_SOURCE=live` *and* credentials, or the server refuses to start.
 - **Personal data is off by default.** The two tools that return names or email
