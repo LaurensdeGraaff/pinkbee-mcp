@@ -27,7 +27,8 @@ Two things to know:
 - **Sessions expire.** `live.py` logs in again once and retries when a request
   comes back 401/403 or returns the login page.
 
-This login POST is the only non-GET request in this project.
+The opt-in weekly setting below also uses PUT. Without the write opt-in, login is
+the only non-GET request.
 
 ## An unknown path answers HTTP 200
 
@@ -89,6 +90,27 @@ with zero capacity. Those are not open shifts.
 
 This endpoint is also the answer to *"how do I get from a shift to a group?"*: the
 `employee_group_ids` field. Nothing else needs to be looked up.
+
+## `PUT /api/schedule/week/<YYYY-MM-DD>/registration-possibilities/<mode>`
+
+Sets which actions volunteers may take for the week containing the date. The UI
+capture used a Thursday (`2026-10-29`), so the MCP sends the selected date in the
+path rather than replacing it with Monday. The tool also returns the Monday as
+`week_start` to identify the affected week.
+
+| Mode | Volunteers may |
+| --- | --- |
+| `registration` | Sign up only |
+| `deregistration` | Cancel a sign-up only |
+| `both` | Sign up and cancel |
+
+The request has no body. The captured UI sent an `x-csrftoken` header and received
+`204 No Content` for `registration` and `both`; `deregistration` is the third mode
+identified for this endpoint. The MCP uses the login session's CSRF cookie and
+requires `ENABLE_WRITE_TO_PINKBEE=true` before sending a PUT. It treats anything
+other than 204 as unconfirmed and does not replay a write after a session failure.
+The capture did not include a GET of the current mode, so this project does not
+claim to read back or automatically restore the previous value.
 
 ## `GET /api/group/`
 
@@ -172,11 +194,11 @@ need them today, because the week schedule already carries the same information,
 but they are useful if you extend the server: `shift-capacity` in particular gives
 the planned capacity pattern without reading week after week.
 
-## Endpoints this project does not use
+## Other write endpoints this project does not use
 
-Nothing that writes. The web app also calls endpoints for creating and changing
-registrations, absences, employees and shifts. They are deliberately absent from
-this codebase, so no tool can reach them.
+The web app also calls endpoints for creating and changing registrations, absences,
+employees and shifts. They are deliberately absent from this codebase, so no tool
+can reach them.
 
 ## Finding more endpoints
 

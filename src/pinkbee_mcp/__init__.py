@@ -1,4 +1,4 @@
-"""Pinkbee MCP server: read-only access to a Pinkbee volunteer roster."""
+"""Pinkbee MCP server: roster reads and an opt-in weekly setting tool."""
 
 __version__ = "0.2.0"
 

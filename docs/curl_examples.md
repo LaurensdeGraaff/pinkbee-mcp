@@ -79,9 +79,21 @@ Or by group id, which is turned into shift ids for you:
 curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"pinkbee_list_registrations","arguments":{"start_date":"2026-07-10","end_date":"2026-09-10","group_ids":[2]}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson | {count, shift_ids}'
 ```
 
+### Set what volunteers may do in a week
+
+Requires `ENABLE_WRITE_TO_PINKBEE=true`; live mode also needs an admin account.
+Use a date in the intended week. This call **changes** that week's setting:
+
+```bash
+curl -s -X POST http://localhost:8087/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"pinkbee_set_week_registration_possibilities","arguments":{"date":"2026-10-29","mode":"registration"}}}' | sed -n 's/^data: //p' | jq -r '.result.content[0].text | fromjson'
+```
+
+The modes are `registration` (only sign up), `deregistration` (only cancel) and
+`both`. For example, to allow both again, repeat the call with `mode: "both"`.
+
 ## Two traps to avoid
 
-### Dates are always snapped back to Monday
+### Week dates and Mondays
 
 A Pinkbee week runs Monday to Sunday, and that is the only shape its API offers:
 `/api/schedule/week/<date>` expects the **Monday** of the week you want.
@@ -94,6 +106,9 @@ can see what happened.
 `pinkbee_list_open_shifts` does the same when it reads the weeks, which is why
 `weeks_read` can begin before your `start_date`. The shift days it returns are still
 filtered to `start_date` and later.
+
+The write tool reports that Monday too, but sends your chosen date in its PUT URL,
+matching the observed Pinkbee UI behavior.
 
 ### An unknown argument name is refused
 

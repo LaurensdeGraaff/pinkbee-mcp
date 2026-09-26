@@ -27,7 +27,8 @@ login sends the password. A local test Pinkbee can use HTTP only with
 `PINKBEE_ALLOW_INSECURE_HTTP_TO_LOCALHOST=true`.
 
 Mock and live modes expose the same MCP calls. Live mode performs only GET requests
-after the login POST.
+after the login POST unless `ENABLE_WRITE_TO_PINKBEE=true` and the weekly setting tool
+is called. That tool needs a Pinkbee account with administrator permissions.
 
 ## Configuration
 
@@ -42,6 +43,7 @@ These are all supported deployment variables. Their defaults are also visible in
 | `PINKBEE_PASSWORD` | empty | Pinkbee password, required in live mode |
 | `PINKBEE_ALLOW_INSECURE_HTTP_TO_LOCALHOST` | `false` | Permit HTTP only to a local test Pinkbee |
 | `PINKBEE_ALLOW_PERSONAL_DATA` | `false` | Enable calls that return names or email addresses |
+| `ENABLE_WRITE_TO_PINKBEE` | `false` | Permit the weekly registration-possibilities tool (live writes require admin rights) |
 | `PINKBEE_MCP_TOKEN` | empty | Shared bearer token required from MCP clients |
 | `PINKBEE_ALLOWED_SENDERS` | empty | Comma-separated sender IPs or DNS names; empty allows all |
 | `PINKBEE_DISABLED_CALLS` | empty | Comma-separated call blacklist; empty enables all |
@@ -111,7 +113,7 @@ reverse proxy.
 
 ## Call blacklist
 
-All six calls are enabled by default. Disable calls by full MCP name:
+All seven calls are discoverable by default. Disable calls by full MCP name:
 
 ```dotenv
 PINKBEE_DISABLED_CALLS=pinkbee_list_group_emails,pinkbee_list_registrations
@@ -131,10 +133,15 @@ Available names:
 | `pinkbee_list_open_shifts` | no |
 | `pinkbee_list_group_emails` | yes |
 | `pinkbee_list_registrations` | yes |
+| `pinkbee_set_week_registration_possibilities` | no; writes when enabled |
 
 `PINKBEE_ALLOW_PERSONAL_DATA=false` is an additional safety gate. The two personal
 data calls remain visible but refuse to return data. Use the blacklist when they
 should not be exposed at all.
+
+`ENABLE_WRITE_TO_PINKBEE=false` similarly leaves the weekly setting tool visible,
+but calls fail before accessing the data source. To hide it too, add
+`pinkbee_set_week_registration_possibilities` to `PINKBEE_DISABLED_CALLS`.
 
 ## Operations
 

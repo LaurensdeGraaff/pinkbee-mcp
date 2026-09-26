@@ -3,13 +3,13 @@
 > 
 > **Proof of concept.**
 
-A read-only [MCP](https://modelcontextprotocol.io) server for **Pinkbee**
+A [MCP](https://modelcontextprotocol.io) server for **Pinkbee**
 (`*.mijnpinkbee.nl`), an online platform for planning shifts and managing
 volunteers. 
 
 It lets an AI assistant answer questions about a roster — which shifts still need
-people, who is scheduled, who is in which group — and nothing more: it cannot book,
-cancel or change anything. 
+people, who is scheduled, who is in which group. An opt-in tool can change which
+registration actions volunteers may take during a week; it does not book or cancel shifts.
 
 ## Run it
 1. Get the docker compose file
@@ -50,6 +50,7 @@ curl -s -X POST http://127.0.0.1:8087/mcp -H "Content-Type: application/json" -H
 | `pinkbee_list_open_shifts` | optional `start_date`, `weeks`, `shift_ids`, `group_ids` | Shifts that still have open spots over the coming weeks |
 | `pinkbee_list_group_emails` | `group_ids`, optional `employment`, `with_names` | Email addresses of volunteers in a group *(personal data)* |
 | `pinkbee_list_registrations` | `start_date`, `end_date`, optional `shift_ids`, `group_ids`, `all_shifts` | Who signed up for which shift *(personal data)* |
+| `pinkbee_set_week_registration_possibilities` | `date`, `mode` | Allow only sign-up (`registration`), only cancellation (`deregistration`), or both (`both`) for the week containing `date` *(requires `ENABLE_WRITE_TO_PINKBEE=true`)* |
 
 Group and shift names are chosen by each Pinkbee administrator, so nothing here
 assumes any particular naming: `pinkbee_list_groups_and_shifts` returns the whole
@@ -80,7 +81,8 @@ PINKBEE_LOGIN=
 PINKBEE_PASSWORD=
 ```
 
-Use an account that only needs to read the roster. Compose reads these values from
+Use an account that only needs to read the roster unless you enable the write tool;
+the write tool requires an admin account. Compose reads these values from
 `.env`; every supported variable and default is visible under `environment` in
 `docker-compose.yml`.
 
@@ -110,8 +112,9 @@ driving the LAN service through DNS rebinding. Normal MCP clients do not send it
 
 ## Safety
 
-- **Read-only.** Every request to Pinkbee is a GET. The only POST in the whole
-  codebase is the login itself.
+- **Writes off by default.** Live writes require `ENABLE_WRITE_TO_PINKBEE=true`;
+  the weekly setting tool also refuses in mock mode until enabled. It sends one PUT
+  per call, never a registration or cancellation on behalf of a volunteer.
 - **Mock data by default.** Reaching a live instance needs a deliberate
   `PINKBEE_DATA_SOURCE=live` *and* credentials, or the server refuses to start.
 - **Personal data is off by default.** The two tools that return names or email
